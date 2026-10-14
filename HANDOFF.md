@@ -17,7 +17,11 @@ v1 只做这四件事，不做全功能客户端；复杂编辑（表格/代码�
 
 - NAS Trilium 服务端：TriliumNext v0.106.0，compose 目录 `/volume2/docker/trilium`，端口 **18190**（2026-10-14 从 8080 改的）
   - 内网 `http://192.168.31.198:18190` / 星空 `http://192.168.188.2:18190` / Tailscale `http://100.95.218.4:18190`
-  - **未设密码**（authRequired=false），syncVersion=39，用户已初始化并建了「Work」等笔记
+  - ⚠️ **服务端已设密码**（2026-10-14 实测：ETAPI 空密码登录返回 401 `WRONG_PASSWORD`；早期写的"未设密码"已过时）
+    → App 设置页必须填密码。syncVersion=39，用户已初始化并建了「Work」等笔记
+  - **公网地址（ddnsto 映射）**：`https://dsm920-ddsnto-trilium-notes.x.ddnsto.com`
+    - ⚠️ **只有 https(443) 通**，`http://` 打不通（走代理 502、直连失败）→ 地址必须写 `https://`
+    - 证书可信（`ssl_verify_result=0`），iOS 不会拦；ddnsto 以群晖套件运行，运行日志 `/tmp/logs/ddnstoshell.log`
   - ⚠️ index.html 已打 iOS polyfill 补丁：宿主 `patch/index.html` 文件级挂载到容器 `/usr/src/app/public/index.html`，**升级容器时补丁会自动保留（挂载在 compose 里）**
 - NAS SSH：`hhxxc@192.168.31.198:8122`（**密码见 `HANDOFF.local.md`**，该文件已 gitignore、不进仓库），异地走 Tailscale `100.95.218.4:8122`；工作区 `D:\nas-tools-backup\_nas_run.py` 是通用执行封装
 - 为知笔记已于 2026-10-14 卸载（Win 客户端 + NAS 容器/镜像）；**数据目录 668M 暂留** `/volume2/docker/wiznote`（唯一副本，用户未最终确认删）
