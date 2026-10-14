@@ -22,6 +22,17 @@ v1 只做这四件事，不做全功能客户端；复杂编辑（表格/代码�
   - **公网地址（ddnsto 映射）**：`https://dsm920-ddsnto-trilium-notes.x.ddnsto.com`
     - ⚠️ **只有 https(443) 通**，`http://` 打不通（走代理 502、直连失败）→ 地址必须写 `https://`
     - 证书可信（`ssl_verify_result=0`），iOS 不会拦；ddnsto 以群晖套件运行，运行日志 `/tmp/logs/ddnstoshell.log`
+- **服务端升级安全（2026-10-15 加固）**——原则：**镜像由别人构建，拉新容器不能丢/不能破自己的配置**
+    - 目录 `/volume2/docker/trilium/` 新增：`UPGRADE.md`（升级手册：改 tag→pull→up -d→refresh-patch→重启→验证/回滚）、
+      `refresh-patch.sh`（从当前镜像重新生成 `patch/index.html` 并注入 iOS<15.4 polyfill，幂等）
+    - `backup.sh` 扩展：除数据外新增**配置层备份** `config_*.tar.gz`（compose + patch + 脚本 + UPGRADE.md + cron 导出），
+      与数据备份同为每日 04:30（/etc/crontab）、保留 14 天
+    - 审计结论：`docker diff trilium` 仅 9 处无害改动（数据目录挂载、localtime、启动时改 passwd/group 属主），
+      **无"只存在容器里"的配置** ✓；数据/配置全在宿主 bind mount + 备份里
+    - ⚠️ **踩过的坑**：单文件 bind mount 绑定的是 **inode** —— 用 `mv` 替换 `patch/index.html` 后容器仍读旧内容，
+      **必须 `docker restart trilium` 重新绑定**；绑定后用原地写入（`cat new > file`，保 inode）才能即时生效
+    - ⚠️ 每日备份会**短暂停容器**（backup.sh 里 STOP_CONTAINER=1）；备份体积 ~100MB/天
+      （document.db 55MB + Trilium 自带 backup-daily.db 55MB，含重复）
   - ⚠️ index.html 已打 iOS polyfill 补丁：宿主 `patch/index.html` 文件级挂载到容器 `/usr/src/app/public/index.html`，**升级容器时补丁会自动保留（挂载在 compose 里）**
 - NAS SSH：`hhxxc@192.168.31.198:8122`（**密码见 `HANDOFF.local.md`**，该文件已 gitignore、不进仓库），异地走 Tailscale `100.95.218.4:8122`；工作区 `D:\nas-tools-backup\_nas_run.py` 是通用执行封装
 - 为知笔记已于 2026-10-14 卸载（Win 客户端 + NAS 容器/镜像）；**数据目录 668M 暂留** `/volume2/docker/wiznote`（唯一副本，用户未最终确认删）
