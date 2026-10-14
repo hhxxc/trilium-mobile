@@ -33,10 +33,18 @@ api.defaults.headers.common.Authorization = loadSettings().token;
 
 // ---------- 认证 ----------
 
-/** 用密码换 ETAPI token；ETAPI 无独立账号体系，密码 = 登录密码 */
+/** 用密码换 ETAPI token；ETAPI 无独立账号体系，密码 = 登录密码。
+ *  注意：服务端返回体是 { authToken }（见 etapi.openapi.yaml 的 /auth/login 201 响应），
+ *  老版本/其他实现可能用 { token }，这里两个都兼容。 */
 export async function login(server, password) {
-  const { data } = await axios.post(`${server.replace(/\/+$/, '')}/etapi/auth/login`, { password }, { timeout: 15000 });
-  return data.token; // { token: "..." }
+  const { data } = await axios.post(
+    `${server.replace(/\/+$/, '')}/etapi/auth/login`,
+    { password, tokenName: 'trilium-mobile' },
+    { timeout: 15000 },
+  );
+  const token = data.authToken || data.token;
+  if (!token) throw new Error('服务端未返回 token（响应: ' + JSON.stringify(data).slice(0, 120) + '）');
+  return token;
 }
 
 export async function logout() {

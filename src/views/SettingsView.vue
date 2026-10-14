@@ -2,7 +2,6 @@
 // 设置：服务器地址 + 密码登录（换 ETAPI token）
 import { ref } from 'vue';
 import { loadSettings, saveSettings, login, logout, appInfo } from '../api.js';
-import { FALLBACK_SERVER } from '../config.js';
 
 const settings = loadSettings();
 const server = ref(settings.server);
@@ -19,10 +18,19 @@ async function doLogin() {
     loggedIn.value = true;
     password.value = '';
     try { info.value = await appInfo(); } catch { info.value = null; }
-    status.value = '已登录' + (info.value ? `（Trilium ${info.value.appVersion || ''}）` : '');
+    status.value = info.value
+      ? `已登录（Trilium ${info.value.appVersion || ''}）`
+      : '已登录，但读取服务器信息失败，请检查密码与地址';
   } catch (e) {
-    status.value = '登录失败：' + (e.response ? e.response.status : e.message)
-      + `。检查地址是否正确（外网请改用 ${FALLBACK_SERVER} 或 Tailscale 地址）`;
+    const code = e.response ? `HTTP ${e.response.status}` : e.message;
+    const hint = !e.response
+      ? '（连不上服务器：地址不对或不在同一网络）'
+      : e.response.status === 401
+        ? '（密码不对）'
+        : e.response.status === 429
+          ? '（失败次数过多，服务器暂时拉黑，等一会儿再试）'
+          : '';
+    status.value = `登录失败：${code}${hint}`;
   }
 }
 
@@ -38,7 +46,7 @@ async function doLogout() {
   <div class="topbar">设置</div>
   <template v-if="!loggedIn">
     <div class="field">
-      <label>服务器地址（内网 31.198 / 星空 188.2 / Tailscale 100.95.218.4，端口 18190）</label>
+      <label>服务器地址（内网 http://192.168.31.198:18190 ；外网 https://dsm920-ddsnto-trilium-notes.x.ddnsto.com）</label>
       <input v-model="server" placeholder="http://192.168.31.198:18190" />
     </div>
     <div class="field">
