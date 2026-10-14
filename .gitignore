@@ -1,0 +1,12 @@
+node_modules/
+dist/
+ios/
+android/
+*.ipa
+builds/
+HANDOFF.local.md
+.DS_Store
+__pycache__/
+nas_config_local.py
+nas_config.local.py
+.workbuddy/
