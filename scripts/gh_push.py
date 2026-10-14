@@ -74,12 +74,30 @@ def main():
     slug = repo_slug()
     local_head = git("rev-parse", "HEAD").strip()
 
+    # 仓库为空时 Git Data API 会 409，先用 Contents API 造一次提交激活
+    is_empty = json.loads(run(["gh", "repo", "view", slug, "--json", "isEmpty"])).get("isEmpty")
+    if is_empty:
+        gh_api("/repos/%s/contents/README.md" % slug, {
+            "message": "chore: 初始化仓库",
+            "content": base64.b64encode(b"# trilium-mobile\n").decode("ascii"),
+        }, method="PUT")
+        print("仓库为空，已建立引导提交以激活 API（随后会被顶替）")
+
     # 远端当前 head（空仓库或无该分支时为 None）
     try:
         remote_head = json.loads(
             gh_api("/repos/%s/commits/%s" % (slug, branch)))["sha"]
     except SystemExit:
         remote_head = None
+
+    # 远端 head 若不在本地（引导提交、或远端历史被重写），无法确定推送范围 → 以本地为准整体重建
+    if remote_head:
+        exists = subprocess.run(["git", "cat-file", "-e", remote_head + "^{commit}"],
+                                capture_output=True).returncode == 0
+        if not exists:
+            print("远端 head %s 本地没有（引导提交或历史被重写）→ 以本地为准重建"
+                  % remote_head[:7])
+            remote_head = None
 
     if remote_head == local_head:
         print("已是最新，无需推送（%s）" % local_head[:7])
@@ -139,13 +157,17 @@ def main():
         parent = csha
         print("  ✓ %s %s" % (csha[:7], message.splitlines()[0][:60]))
 
-    # 更新引用
+    # 更新引用：正常快进；分支不存在（如刚引导过）则强制指向我们的根提交
     if remote_head:
         gh_api("/repos/%s/git/refs/heads/%s" % (slug, branch),
                {"sha": parent, "force": False}, method="PATCH")
     else:
-        gh_api("/repos/%s/git/refs" % slug,
-               {"ref": "refs/heads/%s" % branch, "sha": parent}, method="POST")
+        try:
+            gh_api("/repos/%s/git/refs/heads/%s" % (slug, branch),
+                   {"sha": parent, "force": True}, method="PATCH")
+        except SystemExit:
+            gh_api("/repos/%s/git/refs" % slug,
+                   {"ref": "refs/heads/%s" % branch, "sha": parent}, method="POST")
     print("已推送 → 远端 %s = 本地 %s ✓" % (branch, parent[:7]))
 
 
