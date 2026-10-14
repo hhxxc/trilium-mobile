@@ -58,8 +58,9 @@ public/logo.svg          App 图标（青绿树形，workflow 里自动切全套
 - 工程骨架全部写完，本地 `npm install` + `npm run build` 验证通过（1 秒构建）
 - 仓库 https://github.com/hhxxc/trilium-mobile（私有），**构建成功**，Release `v1.0.00.20`（IPA 约 600KB，TrollStore 直接装）
 - ⚠️ **推送通道时通时断**：`gh api` 一贯可用，但 `git push` / `git fetch` 常被本机代理挡（`CONNECT tunnel failed, response 502`）。
-  - 推送失败时走 `gh api`：单文件用 `PUT /repos/.../contents/<path>`（更新需带 `sha`）；多文件建议一次用 Git Data API（blobs → trees → commits → PATCH refs/heads/main），不产生多条提交
-  - 因此本地与远端可能分叉（内容一致、提交号不同）；网络恢复后 `git fetch && git reset --hard origin/main` 对齐
+  - **优先用 `python scripts/gh_push.py`**：走 gh api 推送本地提交，且逐级校验 blob/tree/commit 的 sha 与本地一致，
+    所以远端与本地保持同源、不会分叉（验证过：推送后远端 sha == 本地 sha）
+  - 单文件急改也可用 `PUT /repos/.../contents/<path>`（更新需带 `sha`），但那会产生新提交、可能与本地分叉
 - ✅ `v1.0.00.21` 已构建（含 `build.target: es2019` + 速记条输入法守卫）
 - ✅ **公开分发仓库 https://github.com/hhxxc/trilium-mobile-ipa（public，只放 IPA 成品，无源码/无历史）** → TrollStore 可直接 Install from URL，手机不用传文件
   - ⚠️ 主仓库保持私有：`HANDOFF.md` 含 NAS SSH 明文密码（历史提交 `4fb2350` 也有），公开即泄露 —— **要公开主库必须先脱敏 + 重写历史，并更换 NAS 密码**
@@ -100,3 +101,23 @@ public/logo.svg          App 图标（青绿树形，workflow 里自动切全套
 - **待做（对齐巢记的完整更新体验）**：
   1. App 内检查更新：读清单 → 下载 IPA → `UIDocumentInteractionController` 交给 TrollStore（巢记已实现，可照搬）
   2. CI 自动发布到 NAS：巢记走 Docker Hub 镜像 + NAS cron 拉取（因 NAS 不能直连 GitHub）；目前本项目为手动跑发布脚本
+
+## 八、2026-10-14 晚：删库重建（安全处置）
+
+起因：主库转公开后，实测发现 **旧提交（改写历史前）仍能按 SHA 匿名取到明文 NAS 密码**
+（`api.github.com/repos/.../commits/<旧sha>` → 200，`contents/HANDOFF.md?ref=<旧sha>` 里密码还在）。
+`filter-branch` + force push 只能改引用，GitHub 上的旧对象不会消失 —— 唯一彻底的办法是新建仓库。
+
+已做：
+- 旧库改名 `hhxxc/trilium-mobile-old` 并**转私有**（匿名访问旧提交立即变 404，暴露已切断）
+- 建同名新库 `hhxxc/trilium-mobile`（public），内容为**单个根提交 `a01b409`**，21 个文件，全历史 0 凭据
+- 本地 `.git` 一并重建（旧本地历史同样含密码），且**本地与远端提交哈希完全一致**（`a01b409`）
+- CI 在新库实测跑通：`workflow_dispatch` → 构建成功 → Release（见下）
+
+⚠️ 两点注意：
+1. **版本号归零**：workflow 用 `github.run_number` 生成版本，重建后 run_number 从 1 开始 →
+   新库首个 Release 是 `v1.0.00.01`（早于旧的 `.21` 只是编号回归，不影响功能）。
+   分发走 NAS 固定文件名 `trilium-mobile.ipa`，与版本号无关。
+2. **旧库还没真正删掉**：`gh` token 缺 `delete_repo` 权限。要彻底删除，执行
+   `gh auth refresh -h github.com -s delete_repo` 后 `gh repo delete hhxxc/trilium-mobile-old --yes`。
+   当前它已是私有，凭据不再公开可达；但仍建议删掉（并顺手更换 NAS SSH 密码，毕竟曾公开约 20 分钟）。
