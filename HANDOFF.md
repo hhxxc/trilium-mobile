@@ -49,7 +49,18 @@ public/logo.svg          App 图标（青绿树形，workflow 里自动切全套
 ## 四、ETAPI 要点（Trilium 0.106）
 
 - 前缀 `/etapi`，鉴权头 `Authorization: <token>`（注意无 Bearer 前缀，代码里直接设了裸 token）
-- `POST /etapi/auth/login {password}` → `{token}`；`POST /etapi/auth/logout`
+- **登录契约（2026-10-15 实测踩坑，务必记住）**：`POST /etapi/auth/login`，body `{ password, tokenName? }`
+  → **201 返回 `{ authToken }`（不是 `token`！）**
+  - 服务端实现：`if (!verifyPassword(password)) → 401 WRONG_PASSWORD`；通过则 `createToken()` → `res.status(201).json({ authToken })`
+  - ⚠️ **只校验密码，不校验 TOTP/MFA** —— 服务端 `mfaMethod=totp` 也不挡 ETAPI 登录（网页登录才要验证码）
+  - ⚠️ 失败过多 → **429 拉黑**（"Client IP has been blacklisted"，按客户端 IP，等待后自动恢复）
+  - 🐛 曾经的 Bug：`src/api.js` 只读 `data.token` → 密码正确也存不进 token ⇒ **永久登录失败**。
+    已修为 `data.authToken || data.token`（v1.0.00.02 起）
+  - ⚠️ **Trilium 不记录 ETAPI 请求日志**（日志里只有 `/api/...` 同步请求）→ 别用服务端日志判断 App 是否连上；
+    可看 ddnsto 隧道日志 `/tmp/logs/ddnstoshell.log` 里的 `new session ... url= http://192.168.31.198:18190`
+  - 排查手段：容器内 ETAPI 规范 `/usr/src/app/assets/etapi.openapi.yaml`；
+    服务端选项 `sqlite3 /volume2/docker/trilium/trilium-data/document.db "select name,value from options"`
+- `POST /etapi/auth/logout`
 - `GET /etapi/app-info`（含 appVersion）
 - `GET /etapi/notes/{id}` → 含 `childNoteIds`、`parentBranchIds`；`GET/PUT /etapi/notes/{id}/content`
 - `PATCH /etapi/notes/{id}`（title 等）；`POST /etapi/notes {parentNoteId,title,type,mime,content}`
