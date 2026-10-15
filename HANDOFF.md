@@ -42,7 +42,8 @@ v1 只做这四件事，不做全功能客户端；复杂编辑（表格/代码�
 
 ```
 capacitor.config.ts      appId=com.hhxxc.trilium，appName=Trilium，纯打包应用（非远程壳）
-src/config.js            默认服务器地址（31.198:18190 / 188.2:18190）、收件箱标题
+src/config.js            默认服务器地址（ddnsto 公网 https://dsm920-ddsnto-trilium-notes.x.ddnsto.com，2026-10-15 起；
+                         原默认 31.198:18190、备用 188.2:18190 已移除——星空地址弃用）、收件箱标题
 src/api.js               ETAPI 客户端：login/token、getNote、getContent/putContent、
                          patchNote、createNote、searchNotes、recentNotes、ensureInbox、localStorage 缓存
 src/App.vue              4 tab 容器 + 编辑器全屏路由
@@ -94,7 +95,7 @@ public/logo.svg          App 图标（青绿树形，workflow 里自动切全套
 - 调试记录：第一次构建失败 = 上传清单漏了 vite.config.js（vite 无 vue 插件直接报 .vue 解析错）；第二次失败 = capacitor.config.ts 需要 typescript → devDeps 已加 `typescript@^5.6.0`
 
 下一步（按优先级）：
-1. iPhone 上用 TrollStore 装 Release 里的 IPA → 打开 App → 设置页填 `http://192.168.31.198:18190`（或 188.2:18190）→ 登录（服务端当前无密码，ETAPI login 空 password 待验证；若不行先在 Trilium 设置个密码）
+1. iPhone 上用 TrollStore 装 Release 里的 IPA → 打开 App → 设置页默认已填 ddnsto 公网地址 `https://dsm920-ddsnto-trilium-notes.x.ddnsto.com`（在家也可改内网 `http://192.168.31.198:18190` 更快）→ 填 Trilium 登录密码登录
 2. ✅ iOS 15 兼容：已在 vite.config.js 加 `build.target: 'es2019'`（2026-10-14）；并扫描过 dist——无 Object.hasOwn/structuredClone/error cause 等硬伤，唯一 `findLast(` 出自 Vue v-for 辅助对象的方法定义、本项目不调用（死代码）
 3. ✅ 速记条 `@keyup.enter` 已加 onEnter 守卫（isComposing / keyCode 229），中文输入法回车上屏不再误保存
 4. 增强：下拉刷新、左滑归档/改所属、图片笔记查看、分享扩展
