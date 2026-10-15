@@ -21,6 +21,14 @@ const config: CapacitorConfig = {
     contentInset: 'always',
     backgroundColor: '#f6f6f8ff',
   },
+  // 关键：让 fetch/XHR 走原生 HTTP 通道（CapacitorHttp），绕过 WKWebView 的 CORS 拦截。
+  // Trilium 服务端不发 Access-Control-Allow-Origin，而 WebView 源是 capacitor://localhost，
+  // 一切到服务器的请求都会被 CORS 拦掉（2026-10-15 实测定性）。
+  plugins: {
+    CapacitorHttp: {
+      enabled: true,
+    },
+  },
 };
 
 export default config;
