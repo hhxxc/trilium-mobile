@@ -113,7 +113,10 @@ export function verifyUnlock(account, password) {
 }
 
 // ---------- 切到后台再回来是否要重新上锁 ----------
-const RELOCK_GRACE_MS = 60 * 1000;
+// 2026-10-15 放宽（用户反馈"太烦"）：60s → 5 分钟；并新增冷启动宽限。
+const RELOCK_GRACE_MS = 5 * 60 * 1000;   // 切后台 5 分钟内回来不重锁
+const COLD_GRACE_MS = 2 * 60 * 1000;     // 解锁后 2 分钟内冷启动（App 被系统杀掉重开）不重锁
+const LAST_UNLOCK_KEY = 'trilium-mobile-last-unlock';
 
 export function markBackgrounded() {
   localStorage.setItem(BG_KEY, String(Date.now()));
@@ -123,4 +126,20 @@ export function shouldRelockOnResume() {
   const t = Number(localStorage.getItem(BG_KEY) || 0);
   localStorage.removeItem(BG_KEY);
   return isLockEnabled() && t > 0 && Date.now() - t > RELOCK_GRACE_MS;
+}
+
+/** 解锁成功时记录时间，供冷启动宽限判断 */
+export function markUnlocked() {
+  localStorage.setItem(LAST_UNLOCK_KEY, String(Date.now()));
+}
+
+/** 冷启动时：距上次解锁不足 COLD_GRACE_MS 就不再锁（快速关掉重开的场景） */
+export function isRecentlyUnlocked() {
+  const t = Number(localStorage.getItem(LAST_UNLOCK_KEY) || 0);
+  return t > 0 && Date.now() - t < COLD_GRACE_MS;
+}
+
+/** 重新上锁时清掉宽限标记（后台超时重锁 / 主动锁定） */
+export function clearUnlockGrace() {
+  localStorage.removeItem(LAST_UNLOCK_KEY);
 }

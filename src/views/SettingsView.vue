@@ -1,8 +1,9 @@
 <script setup>
 // 设置：服务器地址 + 密码登录（换 ETAPI token）；启动锁（账号 + 本地解锁密码）
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import { loadSettings, saveSettings, login, logout, appInfo } from '../api.js';
 import { isLockEnabled, setLockPassword, clearLock, LOCK_ACCOUNT } from '../lock.js';
+import { APP_VERSION, checkUpdate, startTrollStoreUpdate } from '../update.js';
 
 const settings = loadSettings();
 const server = ref(settings.server);
@@ -66,6 +67,33 @@ function removeLock() {
   lockPwd2.value = '';
   lockMsg.value = '已关闭启动锁';
 }
+
+// ---------- 应用内更新 ----------
+const upd = ref(null);        // checkUpdate() 的结果
+const updMsg = ref('');       // 检查/更新过程提示
+const updChecking = ref(false);
+
+async function doCheckUpdate(silent = false) {
+  if (!silent) updChecking.value = true;
+  updMsg.value = silent ? '' : '检查中…';
+  try {
+    upd.value = await checkUpdate();
+    if (upd.value.hasUpdate) updMsg.value = '';
+    else updMsg.value = silent ? '' : '已是最新版本';
+  } catch (e) {
+    if (!silent) updMsg.value = '检查失败：' + (e.message || '网络不可达');
+  } finally {
+    updChecking.value = false;
+  }
+}
+
+function doUpdate() {
+  if (!upd.value) return;
+  updMsg.value = '正在拉起 TrollStore…（它会下载并覆盖安装，数据保留）';
+  startTrollStoreUpdate(upd.value.ipaUrl);
+}
+
+onMounted(() => { doCheckUpdate(true); });
 </script>
 
 <template>
@@ -91,9 +119,17 @@ function removeLock() {
   <p v-if="status" style="font-size:13px; color:var(--muted); margin:8px 16px;">{{ status }}</p>
 
   <div class="card" style="margin-top:20px;">
+    <div class="title">更新</div>
+    <div class="meta">当前版本 v{{ APP_VERSION }}<template v-if="upd && upd.hasUpdate"> · 发现新版本 v{{ upd.latest }}</template></div>
+  </div>
+  <p v-if="updMsg" style="font-size:13px; color:var(--muted); margin:8px 16px;">{{ updMsg }}</p>
+  <button class="btn secondary" :disabled="updChecking" @click="doCheckUpdate(false)">{{ updChecking ? '检查中…' : '检查更新' }}</button>
+  <button v-if="upd && upd.hasUpdate" class="btn" @click="doUpdate">更新到 v{{ upd.latest }}</button>
+
+  <div class="card" style="margin-top:20px;">
     <div class="title">启动锁</div>
     <div class="meta">
-      {{ lockOn ? '已启用：每次打开 App 需「账号 + 解锁密码」' : '未启用：打开 App 直接进入' }}
+      {{ lockOn ? '已启用：冷启动/切后台超 5 分钟需解锁（刚解锁过 2 分钟内免锁）' : '未启用：打开 App 直接进入' }}
     </div>
   </div>
   <div class="field">

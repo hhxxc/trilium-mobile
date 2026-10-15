@@ -29,14 +29,11 @@ function tryUnlock() {
   <div class="page">
     <div class="card">
       <div class="title">Trilium 笔记已锁定</div>
-      <div class="meta">输入账号与解锁密码后进入</div>
+      <div class="meta">账号 {{ LOCK_ACCOUNT }} · 输入解锁密码进入</div>
     </div>
     <div class="field">
-      <label>账号</label>
-      <input
-        v-model="account" autocapitalize="off" autocorrect="off" spellcheck="false"
-        placeholder="账号"
-      />
+      <label>账号（固定为 {{ LOCK_ACCOUNT }}）</label>
+      <input :value="LOCK_ACCOUNT" readonly autocapitalize="off" autocorrect="off" spellcheck="false" style="color:var(--muted);" />
     </div>
     <div class="field">
       <label>解锁密码</label>

@@ -17,8 +17,10 @@
 import argparse
 import base64
 import hashlib
+import json
 import os
 import sys
+import tempfile
 
 import paramiko
 
@@ -119,6 +121,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ipa", required=True, help="本地 IPA 路径")
     ap.add_argument("--name", default="trilium-mobile.ipa", help="NAS 上的文件名")
+    ap.add_argument("--version", default="", help="IPA 版本号；给了就同步上传更新清单 latest-trilium.json")
     args = ap.parse_args()
 
     if not os.path.isfile(args.ipa):
@@ -134,6 +137,17 @@ def main():
     client, _ = connect(user, PASSWORD, port, hosts)
     try:
         digest = upload(client, args.ipa, args.name)
+        if args.version:
+            manifest = {
+                "version": args.version,
+                "ipaUrl": "%s/%s" % (PUBLIC_BASE.rstrip("/"), args.name),
+            }
+            tmp = os.path.join(tempfile.gettempdir(), "latest-trilium.json")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, ensure_ascii=False)
+            upload(client, tmp, "latest-trilium.json")
+            os.remove(tmp)
+            print("更新清单已发布: %s/latest-trilium.json" % PUBLIC_BASE.rstrip("/"))
     finally:
         client.close()
 
