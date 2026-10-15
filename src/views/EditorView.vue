@@ -47,10 +47,10 @@ async function save() {
 </script>
 
 <template>
-  <div class="topbar" style="display:flex; align-items:center; justify-content:space-between;">
-    <span style="color:var(--accent)" @click="emit('close')">‹ 返回</span>
-    <span style="color:var(--muted); font-size:13px;">{{ status }}</span>
-    <span :style="saving ? 'color:var(--muted)' : 'color:var(--accent)'" @click="save">{{ saving ? '…' : '保存' }}</span>
+  <div class="topbar nav">
+    <span class="nav-btn" @click="emit('close')">‹ 返回</span>
+    <span class="nav-status">{{ status }}</span>
+    <span class="nav-btn" :class="{ disabled: saving }" @click="save">{{ saving ? '…' : '保存' }}</span>
   </div>
   <p v-if="loading" class="empty">加载中…</p>
   <template v-else>

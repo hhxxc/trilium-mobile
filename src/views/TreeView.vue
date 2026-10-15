@@ -43,13 +43,13 @@ loadChildren('root');
 </script>
 
 <template>
-  <div class="topbar">
-    <span v-for="(c, i) in crumbs" :key="c.noteId" style="margin-right:6px;">
-      <template v-if="i > 0">› </template>
-      <span :style="i === crumbs.length - 1 ? 'color:var(--text)' : 'color:var(--muted)'" @click="enter(c)">{{ c.title }}</span>
-    </span>
+  <div class="topbar topbar-left">
+    <template v-for="(c, i) in crumbs" :key="c.noteId">
+      <span v-if="i > 0" class="crumb-sep">›</span>
+      <span class="crumb" :class="{ active: i === crumbs.length - 1 }" @click="enter(c)">{{ c.title }}</span>
+    </template>
   </div>
-  <p v-if="error" style="color:#a32d2d; font-size:13px; margin:8px 16px;">{{ error }}</p>
+  <p v-if="error" style="color:var(--red); font-size:13px; margin:8px 16px;">{{ error }}</p>
   <p v-if="loading" class="empty">加载中…</p>
   <div
     v-for="n in children" :key="n.noteId"

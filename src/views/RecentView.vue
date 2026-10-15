@@ -67,7 +67,7 @@ onMounted(() => { if (loadSettings().token) refresh(); });
     <input v-model="draft" placeholder="记一笔…" @keyup.enter="onEnter" />
     <button :disabled="saving" @click="quickSave">↑</button>
   </div>
-  <p v-if="error" style="color:#a32d2d; font-size:13px; margin:8px 16px;">{{ error }}</p>
+  <p v-if="error" style="color:var(--red); font-size:13px; margin:8px 16px;">{{ error }}</p>
   <p v-if="loading" class="empty">加载中…</p>
   <div v-for="n in notes" :key="n.noteId" class="card" @click="emit('open', n.noteId)">
     <div class="title">{{ n.title }}</div>

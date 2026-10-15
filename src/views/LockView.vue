@@ -27,6 +27,7 @@ function tryUnlock() {
 <template>
   <div class="topbar">已锁定</div>
   <div class="page">
+    <div class="lock-glyph">🔒</div>
     <div class="card">
       <div class="title">Trilium 笔记已锁定</div>
       <div class="meta">账号 {{ LOCK_ACCOUNT }} · 输入解锁密码进入</div>

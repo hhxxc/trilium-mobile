@@ -25,7 +25,9 @@ async function doSearch() {
   <div class="topbar">搜索</div>
   <div class="quickbar">
     <input v-model="query" placeholder="全文搜索…" @keyup.enter="doSearch" />
-    <button :disabled="loading" @click="doSearch">⌕</button>
+    <button :disabled="loading" @click="doSearch">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8L20 20"/></svg>
+    </button>
   </div>
   <p v-if="loading" class="empty">搜索中…</p>
   <div v-for="n in results" :key="n.noteId" class="card" @click="emit('open', n.noteId)">

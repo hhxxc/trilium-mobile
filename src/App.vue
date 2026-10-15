@@ -9,11 +9,22 @@ import SearchView from './views/SearchView.vue';
 import SettingsView from './views/SettingsView.vue';
 import EditorView from './views/EditorView.vue';
 
+// SF Symbols 风格线性图标（clock / list / magnifier / sliders）
+const ICONS = {
+  recent: '<circle cx="12" cy="12" r="8.25"/><path d="M12 7.75V12l2.75 1.75"/>',
+  tree: '<path d="M9 6.5h11M9 12h11M9 17.5h11"/><path d="M4.6 6.5h.01M4.6 12h.01M4.6 17.5h.01"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8L20 20"/>',
+  settings: '<path d="M4 8h9.5M19.5 8H20M4 16h.5M10.5 16H20"/><circle cx="16.5" cy="8" r="2.2"/><circle cx="7.5" cy="16" r="2.2"/>',
+};
+function iconSvg(id) {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + ICONS[id] + '</svg>';
+}
+
 const tabs = [
-  { id: 'recent', icon: '▤', label: '最近' },
-  { id: 'tree', icon: '☰', label: '笔记树' },
-  { id: 'search', icon: '⌕', label: '搜索' },
-  { id: 'settings', icon: '⚙', label: '设置' },
+  { id: 'recent', icon: 'recent', label: '最近' },
+  { id: 'tree', icon: 'tree', label: '笔记树' },
+  { id: 'search', icon: 'search', label: '搜索' },
+  { id: 'settings', icon: 'settings', label: '设置' },
 ];
 
 // 启动锁：启用了就先进锁屏；解锁状态只保存在内存里。
@@ -61,7 +72,7 @@ onUnmounted(() => {
         v-for="t in tabs" :key="t.id" :class="{ active: tab === t.id }"
         @click="tab = t.id"
       >
-        <span class="ico">{{ t.icon }}</span>{{ t.label }}
+        <span class="ico" v-html="iconSvg(t.icon)"></span>{{ t.label }}
       </button>
     </nav>
   </template>
