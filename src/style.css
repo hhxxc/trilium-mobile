@@ -128,14 +128,19 @@ body { font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif; 
 /* 空态 / 提示 */
 .empty { text-align: center; color: var(--muted); padding: 56px 24px; font-size: 15px; }
 
-/* ---------- 笔记树（plain list：白底 + 发丝分隔线 + 灰色尖角） ---------- */
+/* ---------- 笔记树（有道云式：文件夹图标 + 行尾条数，44pt 行高） ---------- */
 .tree-row {
-  display: flex; align-items: center; gap: 8px; padding: 13px 16px;
+  display: flex; align-items: center; gap: 10px; padding: 10px 16px; min-height: 44px;
   background: var(--card); border-top: 0.5px solid var(--separator);
 }
 .tree-row:first-of-type { border-top: 0; }
 .tree-row:active { background: #E2E2E7; }
-.tree-row .name { flex: 1; font-size: 17px; }
+.tree-row .name { flex: 1; font-size: 16px; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-row .tree-ic { width: 27px; height: 21px; border-radius: 6px; background: var(--tint-soft);
+  color: var(--tint); display: flex; align-items: center; justify-content: center; flex: none; }
+.tree-row .tree-ic.leaf { background: transparent; }
+.tree-row .tree-count { font-size: 13px; color: var(--muted); }
 .tree-row .arrow { color: rgba(60, 60, 67, 0.3); font-size: 19px; font-weight: 700; }
 
 /* ---------- 锁屏 ---------- */

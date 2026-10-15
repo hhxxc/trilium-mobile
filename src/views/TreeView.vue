@@ -39,6 +39,8 @@ async function openRow(n) {
   }
 }
 
+const isFolder = (n) => (n.childNoteIds || []).length > 0;
+
 loadChildren('root');
 </script>
 
@@ -53,11 +55,16 @@ loadChildren('root');
   <p v-if="loading" class="empty">加载中…</p>
   <div
     v-for="n in children" :key="n.noteId"
-    class="tree-row" :class="{ folder: (n.childNoteIds || []).length > 0 }"
+    class="tree-row" :class="{ folder: isFolder(n) }"
     @click="openRow(n)"
   >
+    <span class="tree-ic" :class="{ leaf: !isFolder(n) }">
+      <svg v-if="isFolder(n)" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#8E8E93" stroke-width="2.2" stroke-linecap="round"><path d="M5 5h14M5 10h14M5 15h9"/></svg>
+    </span>
     <span class="name">{{ n.title }}</span>
-    <span class="arrow">{{ (n.childNoteIds || []).length > 0 ? '›' : '' }}</span>
+    <span v-if="isFolder(n)" class="tree-count">{{ (n.childNoteIds || []).length }}</span>
+    <span class="arrow">›</span>
   </div>
   <div v-if="!loading && !children.length" class="empty">此级无子笔记</div>
 </template>
