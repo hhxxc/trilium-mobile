@@ -62,7 +62,7 @@ onUnmounted(() => {
   <EditorView v-else-if="isEditing" :note-id="editorNoteId" @close="closeEditor" />
   <template v-else>
     <div class="page">
-      <RecentView v-if="tab === 'recent'" @open="openNote" />
+      <RecentView v-if="tab === 'recent'" @open="openNote" @settings="tab = 'settings'" />
       <TreeView v-else-if="tab === 'tree'" @open="openNote" />
       <SearchView v-else-if="tab === 'search'" @open="openNote" />
       <SettingsView v-else />

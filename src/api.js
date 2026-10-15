@@ -91,18 +91,31 @@ export async function createNote(parentNoteId, title, content = '', type = 'text
   return data; // { note, branch }
 }
 
+/** 搜索笔记。
+ *  ⚠️ TriliumNext v0.106 起搜索合并进 GET /etapi/notes?search=…（老版的 /etapi/search-notes 已 404），
+ *  响应沿用 SearchResponse{results:[…]}；这里优先新路径，404 时回退老路径以兼容其他版本。 */
 export async function searchNotes(query, limit = 30) {
-  const { data } = await api.get('/etapi/search-notes', {
-    params: { search: query },
-  });
-  return (data.results || data || []).slice(0, limit); // { results: [ {noteId,title,...} ] }
+  let data;
+  try {
+    ({ data } = await api.get('/etapi/notes', { params: { search: query } }));
+  } catch (e) {
+    if (e.response && e.response.status === 404) {
+      ({ data } = await api.get('/etapi/search-notes', { params: { search: query } }));
+    } else { throw e; }
+  }
+  return (data.results || data || []).slice(0, limit);
 }
 
 /** 最近修改的笔记：用搜索语法 order by dateModified desc（Trilium 搜索支持） */
 export async function recentNotes(limit = 30) {
-  const { data } = await api.get('/etapi/search-notes', {
-    params: { search: `order by dateModified desc limit ${limit}` },
-  });
+  let data;
+  try {
+    ({ data } = await api.get('/etapi/notes', { params: { search: `order by dateModified desc limit ${limit}` } }));
+  } catch (e) {
+    if (e.response && e.response.status === 404) {
+      ({ data } = await api.get('/etapi/search-notes', { params: { search: `order by dateModified desc limit ${limit}` } }));
+    } else { throw e; }
+  }
   return data.results || data || [];
 }
 

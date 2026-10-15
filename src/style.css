@@ -21,7 +21,8 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); h
 body { font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif; font-size: 16px;
   -webkit-font-smoothing: antialiased; }
 
-#app { height: 100vh; display: flex; flex-direction: column; }
+/* ⚠️ 用 100% 而非 100vh：iOS WKWebView 里 100vh 可能比可视区高，会把底部标签栏顶出屏幕 */
+#app { height: 100%; display: flex; flex-direction: column; }
 
 /* ---------- 导航栏（毛玻璃 + 吸顶） ---------- */
 .topbar {
@@ -53,6 +54,7 @@ body { font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif; 
 
 /* ---------- 标签栏（毛玻璃） ---------- */
 .tabbar {
+  flex-shrink: 0;
   display: flex; background: var(--bar-bg);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   backdrop-filter: saturate(180%) blur(20px);

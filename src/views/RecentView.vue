@@ -27,7 +27,9 @@ async function refresh() {
     notes.value = list.map((n) => ({ ...n, _content: undefined }));
     writeCache(notes.value);
   } catch (e) {
-    error.value = '加载失败：' + (e.response ? e.response.status : e.message) + '（显示本地缓存）';
+    const code = e.response ? e.response.status : e.message;
+    const hint = code === 404 ? '（404＝服务器地址不对：外网 https://dsm920-ddsnto-trilium-notes.x.ddnsto.com，内网要带 :18190，别加 /etapi）' : '';
+    error.value = '加载失败：' + code + hint + '（显示本地缓存）';
   } finally {
     loading.value = false;
   }
@@ -67,7 +69,8 @@ onMounted(() => { if (loadSettings().token) refresh(); });
     <input v-model="draft" placeholder="记一笔…" @keyup.enter="onEnter" />
     <button :disabled="saving" @click="quickSave">↑</button>
   </div>
-  <p v-if="error" style="color:var(--red); font-size:13px; margin:8px 16px;">{{ error }}</p>
+  <p v-if="error" style="color:var(--red); font-size:13px; margin:8px 16px; line-height:1.5;">{{ error }}</p>
+  <button v-if="error" class="btn secondary" style="margin-top:4px;" @click="emit('settings')">去设置检查服务器地址</button>
   <p v-if="loading" class="empty">加载中…</p>
   <div v-for="n in notes" :key="n.noteId" class="card" @click="emit('open', n.noteId)">
     <div class="title">{{ n.title }}</div>
