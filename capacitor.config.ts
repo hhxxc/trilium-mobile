@@ -14,11 +14,12 @@ const config: CapacitorConfig = {
   appName: 'Trilium',
   webDir: 'dist',
   ios: {
-    contentInset: 'always',
+    // ⚠️ 不要设 contentInset: 'always'（2026-10-17 修）：它让 WKWebView 自动加安全区
+    // contentInset，与 CSS 的 viewport-fit=cover + env(safe-area-inset-*) 全出血方案叠加，
+    // 导致顶栏不贴状态栏、底部标签栏悬空一大块黑边。全靠 CSS env() 处理安全区即可。
     backgroundColor: '#f6f6f8ff',
   },
   android: {
-    contentInset: 'always',
     backgroundColor: '#f6f6f8ff',
   },
   // 关键：让 fetch/XHR 走原生 HTTP 通道（CapacitorHttp），绕过 WKWebView 的 CORS 拦截。
