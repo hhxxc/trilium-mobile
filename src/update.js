@@ -16,7 +16,17 @@
 import pkg from '../package.json' with { type: 'json' };
 import axios from 'axios';
 
-const MANIFEST_URL = 'https://ezbookx.x.ddnsto.com/api/nestkeep/latest-trilium.json';
+// 清单地址（两条，依次尝试）：
+//  ① manifest-trilium.ipa —— 内容是 JSON，但后缀 .ipa → 服务端按 text/plain 下发。
+//     ★ 关键：iOS 原生层（HttpRequestHandler.buildResponse）对 content-type 含
+//     application/json 的响应强制 tryParseJson，失败时把错误描述当 data 返回（实测
+//     手机网络路径上被污染，报 cannot parse response），且 responseType 无法绕开。
+//     text/plain 不触发该分支 → 配合 responseType:'arraybuffer' 走 base64，拿到原始字节。
+//  ② latest-trilium.json —— 老地址兜底（json 分支可能被原生污染，仅救急）。
+const MANIFEST_URLS = [
+  'https://ezbookx.x.ddnsto.com/api/nestkeep/manifest-trilium.ipa',
+  'https://ezbookx.x.ddnsto.com/api/nestkeep/latest-trilium.json',
+];
 const IPA_URL_FALLBACK = 'https://ezbookx.x.ddnsto.com/api/nestkeep/trilium-mobile.ipa';
 
 /** 当前版本：CI 构建前会把 package.json 的 version 改成 1.0.xx.xx，打包时一起进来 */
@@ -63,10 +73,10 @@ export async function checkUpdate() {
 /** 导出给「连接自检」用：单独探测清单可达性，并报告是哪条通道打通的 */
 export async function probeManifest() {
   try {
-    const { data, via, contentType, bytes } = await fetchManifestDetailed();
-    return { ok: true, version: String(data.version || ''), url: MANIFEST_URL, via, contentType, bytes };
+    const { data, via, url, contentType, bytes } = await fetchManifestDetailed();
+    return { ok: true, version: String(data.version || ''), url, via, contentType, bytes };
   } catch (e) {
-    return { ok: false, error: e && e.message ? e.message : String(e), url: MANIFEST_URL };
+    return { ok: false, error: e && e.message ? e.message : String(e), url: MANIFEST_URLS[0] };
   }
 }
 
@@ -94,50 +104,55 @@ function normalizeManifest(raw) {
 }
 
 /**
- * 依次尝试：① CapacitorHttp 原生 request（最稳，等价于笔记写操作走的路径）
- *            ② axios ③ 裸 fetch
+ * 依次尝试：两条 URL × 三条通道
+ *   URL① manifest-trilium.ipa（text/plain，原生不碰解析，arraybuffer/base64 稳）
+ *   URL② latest-trilium.json（老地址，json 可能被原生强解析污染，仅兜底）
+ *   通道① CapacitorHttp 原生 request（arraybuffer → base64 → JS 解码）
+ *   通道② axios ③ 裸 fetch
  * 记录每条的错因，全失败时拼成一行给人看。
  */
 async function fetchManifestDetailed() {
-  const attempts = [
-    ['capacitor-http', async () => {
-      const { CapacitorHttp } = await import('@capacitor/core');
-      // ⚠️ 原生层（HttpRequestHandler.buildResponse）只要 content-type 含 application/json
-      // 就强制 tryParseJson，失败时把「错误描述字符串」当 data 返回——污染数据且无法用
-      // responseType:'text' 绕开（json 分支优先级更高）。
-      // 唯一干净的绕法：responseType:'arraybuffer' → 原生走 base64 分支，JS 端自己解码。
-      const res = await CapacitorHttp.request({
-        url: MANIFEST_URL,
-        method: 'GET',
-        responseType: 'arraybuffer',
-        headers: { 'Cache-Control': 'no-cache', Accept: 'application/json,*/*' },
-        connectTimeout: 20000,
-        readTimeout: 20000,
-      });
-      if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
-      const text = b64ToUtf8(res.data);
-      return { data: normalizeManifest(text), contentType: headerOf(res.headers, 'content-type'), bytes: text.length };
-    }],
-    ['axios', async () => {
-      const r = await axios.get(MANIFEST_URL, {
-        timeout: 20000,
-        responseType: 'text',
-        transformResponse: [(d) => d],
-        headers: { 'Cache-Control': 'no-cache', Accept: 'application/json,*/*' },
-      });
-      return { data: normalizeManifest(r.data), contentType: r.headers && r.headers['content-type'], bytes: (r.data || '').length };
-    }],
-    ['fetch', async () => {
-      const r = await fetch(MANIFEST_URL, { cache: 'no-store', headers: { Accept: 'application/json,*/*' } });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const text = await r.text();
-      return { data: normalizeManifest(text), contentType: r.headers.get('content-type'), bytes: text.length };
-    }],
-  ];
   const errs = [];
-  for (const [name, fn] of attempts) {
-    try { return Object.assign(await fn(), { via: name }); } catch (e) {
-      errs.push(`${name}: ${(e && e.message) || e}`);
+  for (const url of MANIFEST_URLS) {
+    const attempts = [
+      ['capacitor-http', async () => {
+        const { CapacitorHttp } = await import('@capacitor/core');
+        // responseType:'arraybuffer' → 原生返回 base64；对 text/plain 的 URL 绝不会
+        // 被原生 JSON 分支拦截（json 分支只在 content-type 含 application/json 时优先）。
+        const res = await CapacitorHttp.request({
+          url,
+          method: 'GET',
+          responseType: 'arraybuffer',
+          headers: { 'Cache-Control': 'no-cache', Accept: 'application/json,text/plain,*/*' },
+          connectTimeout: 20000,
+          readTimeout: 20000,
+        });
+        if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+        const text = b64ToUtf8(res.data);
+        return { data: normalizeManifest(text), contentType: headerOf(res.headers, 'content-type'), bytes: text.length };
+      }],
+      ['axios', async () => {
+        const r = await axios.get(url, {
+          timeout: 20000,
+          responseType: 'text',
+          transformResponse: [(d) => d],
+          headers: { 'Cache-Control': 'no-cache', Accept: 'application/json,text/plain,*/*' },
+        });
+        return { data: normalizeManifest(r.data), contentType: r.headers && r.headers['content-type'], bytes: (r.data || '').length };
+      }],
+      ['fetch', async () => {
+        const r = await fetch(url, { cache: 'no-store', headers: { Accept: 'application/json,text/plain,*/*' } });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const text = await r.text();
+        return { data: normalizeManifest(text), contentType: r.headers.get('content-type'), bytes: text.length };
+      }],
+    ];
+    for (const [name, fn] of attempts) {
+      try {
+        return Object.assign(await fn(), { via: name, url });
+      } catch (e) {
+        errs.push(`${name}(${url.slice(-22)}): ${(e && e.message) || e}`);
+      }
     }
   }
   throw new Error(errs.join(' | '));

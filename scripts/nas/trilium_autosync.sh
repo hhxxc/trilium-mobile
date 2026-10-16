@@ -139,6 +139,17 @@ printf '{"version": "%s", "ipaUrl": "%s/%s"}\n' "$REMOTE_VER" "$PUBLIC_BASE" "$I
 mv -f "$TMP_MAN" "$DATA_DIR/$MANIFEST"
 chmod 644 "$DATA_DIR/$MANIFEST" 2>/dev/null
 
+# 4b. 同步维护 manifest-trilium.ipa：内容与 latest-trilium.json 相同、后缀 .ipa。
+#  原因：iOS 原生层（HttpRequestHandler.buildResponse）对 content-type 含 application/json
+#  的响应强制 tryParseJson，失败时把错误描述当 data 返回（手机网络路径上实测被污染）。
+#  .ipa 后缀 → ezbookkeeping 按 application/zip 下发 → 原生走 arraybuffer/base64 分支，
+#  JS 端拿到原始字节自己解码，全程绕开原生 JSON 解析。
+MANIFEST_AS_IPA="manifest-trilium.ipa"
+TMP_MI="$DATA_DIR/.${MANIFEST_AS_IPA}.tmp"
+printf '{"version": "%s", "ipaUrl": "%s/%s"}\n' "$REMOTE_VER" "$PUBLIC_BASE" "$IPA_NAME" > "$TMP_MI"
+mv -f "$TMP_MI" "$DATA_DIR/$MANIFEST_AS_IPA"
+chmod 644 "$DATA_DIR/$MANIFEST_AS_IPA" 2>/dev/null
+
 # 5. 清理：只保留最近 N 个带版本号的副本（trilium-mobile.ipa 固定名不动）
 ls -t "$DATA_DIR"/trilium-mobile-v*.ipa 2>/dev/null | tail -n +$((KEEP_IPA + 1)) | xargs -r rm -f
 
