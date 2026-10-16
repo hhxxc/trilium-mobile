@@ -66,5 +66,11 @@ loadChildren('root');
     <span v-if="isFolder(n)" class="tree-count">{{ (n.childNoteIds || []).length }}</span>
     <span class="arrow">›</span>
   </div>
-  <div v-if="!loading && !children.length" class="empty">此级无子笔记</div>
+  <div v-if="!loading && !children.length" class="empty">
+    <div class="empty-ic">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    </div>
+    此级无子笔记
+    <div class="sub">这一层下面还没有内容</div>
+  </div>
 </template>

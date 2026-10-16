@@ -1,6 +1,6 @@
 <script setup>
 // 布局方案 D 首页：最近笔记卡片流 + 底部速记条（速记落「收件箱」）
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { recentNotes, ensureInbox, createNote, readCache, writeCache, cacheUpsert, loadSettings } from '../api.js';
 
 const emit = defineEmits(['open']);
@@ -9,6 +9,38 @@ const loading = ref(false);
 const error = ref('');
 const draft = ref('');
 const saving = ref(false);
+
+// ---------- 下拉刷新 ----------
+const pullY = ref(0);
+let tsY = 0, tsActive = false, tsOnTop = false;
+function onTS(e) {
+  const page = document.querySelector('.page');
+  tsOnTop = !!(page && page.scrollTop <= 0);
+  tsY = e.touches[0].clientY;
+  tsActive = true;
+}
+function onTM(e) {
+  if (!tsActive || !tsOnTop || loading.value) return;
+  const dy = e.touches[0].clientY - tsY;
+  if (dy > 0) pullY.value = Math.min(Math.round(dy * 0.45), 64);
+}
+async function onTE() {
+  tsActive = false;
+  const should = pullY.value > 44;
+  pullY.value = should ? 52 : 0;
+  if (should) await refresh();
+  pullY.value = 0;
+}
+onMounted(() => {
+  document.addEventListener('touchstart', onTS, { passive: true });
+  document.addEventListener('touchmove', onTM, { passive: true });
+  document.addEventListener('touchend', onTE);
+});
+onUnmounted(() => {
+  document.removeEventListener('touchstart', onTS);
+  document.removeEventListener('touchmove', onTM);
+  document.removeEventListener('touchend', onTE);
+});
 
 function snippet(content) {
   const text = String(content || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').trim();
@@ -72,6 +104,11 @@ onMounted(() => { if (loadSettings().token) refresh(); });
   <div class="quickbar">
     <input v-model="draft" placeholder="记一笔…" @keyup.enter="onEnter" />
     <button :disabled="saving" @click="quickSave">↑</button>
+  </div>
+  <div class="pull-ind" :style="{ height: pullY + 'px', opacity: Math.min(pullY / 44, 1) }">
+    <svg class="pull-spin" :class="{ spin: loading }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+      <path d="M12 3a9 9 0 1 1-8.5 6" />
+    </svg>
   </div>
   <p v-if="error" style="color:var(--red); font-size:13px; margin:8px 16px; line-height:1.5;">{{ error }}</p>
   <button v-if="error" class="btn secondary" style="margin-top:4px;" @click="emit('settings')">去设置页重新登录 / 检查地址</button>

@@ -33,5 +33,11 @@ async function doSearch() {
   <div v-for="n in results" :key="n.noteId" class="card" @click="emit('open', n.noteId)">
     <div class="title">{{ n.title }}</div>
   </div>
-  <div v-if="!loading && searched && !results.length" class="empty">没有匹配的笔记</div>
+  <div v-if="!loading && searched && !results.length" class="empty">
+    <div class="empty-ic">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8L20 20"/></svg>
+    </div>
+    没有匹配的笔记
+    <div class="sub">换个关键词再试一次</div>
+  </div>
 </template>
