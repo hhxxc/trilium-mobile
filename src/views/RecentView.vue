@@ -68,7 +68,7 @@ onMounted(() => { if (loadSettings().token) refresh(); });
 </script>
 
 <template>
-  <div class="topbar">最近</div>
+  <div class="topbar large">最近</div>
   <div class="quickbar">
     <input v-model="draft" placeholder="记一笔…" @keyup.enter="onEnter" />
     <button :disabled="saving" @click="quickSave">↑</button>
@@ -81,5 +81,11 @@ onMounted(() => { if (loadSettings().token) refresh(); });
     <div v-if="snippet(n._content || n.content)" class="snippet">{{ snippet(n._content || n.content) }}</div>
     <div class="meta">{{ fmtDate(n.dateModified) }}{{ n._local ? ' · 本地' : '' }}</div>
   </div>
-  <div v-if="!loading && !notes.length" class="empty">还没有笔记，先在上面记一笔吧</div>
+  <div v-if="!loading && !notes.length" class="empty">
+    <div class="empty-ic">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.25"/><path d="M12 7.75V12l2.75 1.75"/></svg>
+    </div>
+    还没有笔记
+    <div class="sub">在上方输入框记下第一笔吧</div>
+  </div>
 </template>

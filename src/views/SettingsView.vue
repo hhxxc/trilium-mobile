@@ -121,7 +121,7 @@ onMounted(() => { doCheckUpdate(true); });
 </script>
 
 <template>
-  <div class="topbar">设置</div>
+  <div class="topbar large">设置</div>
   <template v-if="!loggedIn">
     <div class="field">
       <label>服务器地址（默认 ddnsto 公网，家内外通用；在家可改内网 http://192.168.31.198:18190 更快）</label>

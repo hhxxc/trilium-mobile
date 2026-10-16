@@ -22,7 +22,7 @@ async function doSearch() {
 </script>
 
 <template>
-  <div class="topbar">搜索</div>
+  <div class="topbar large">搜索</div>
   <div class="quickbar">
     <input v-model="query" placeholder="全文搜索…" @keyup.enter="doSearch" />
     <button :disabled="loading" @click="doSearch">
