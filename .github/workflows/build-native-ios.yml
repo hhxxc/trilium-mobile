@@ -82,7 +82,7 @@ jobs:
           node -e "
             const fs = require('fs');
             const sharp = require('sharp');
-            const svg = fs.readFileSync('public/logo.svg', 'utf8');
+            const svg = fs.readFileSync('ios-app/TriliumMobile/Assets.xcassets/logo.svg', 'utf8');
             sharp(Buffer.from(svg)).resize(1024,1024).png().toFile('/tmp/icon.png');
           "
           DST="ios-app/TriliumMobile/Assets.xcassets/AppIcon.appiconset"

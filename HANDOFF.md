@@ -6,12 +6,19 @@
 
 用户（hhxxc）的 iPhone 是 **iOS 15.x（明确不升级）**，官方 Trilium 网页版在其 Safari 上报
 `Object.hasOwn is not a function`（ES2022 语法，iOS 15.4 前不支持）——服务端已注入 polyfill 修好
-（见下），但**移动端布局难用**（桌面版挤小屏）。用户决定照「巢记 NestKeep」（其自研记账 App，
-`D:\ezbookkeeping-ios`）的路子自搓一个 Trilium 手机伴侣端。
+（见下），但**移动端布局难用**（桌面版挤小屏）。用户决定自搓一个 Trilium 手机伴侣端。
 
-选定布局方案 D（原型见 2026-10-14 会话的 Visualizer）：
+**2026-10-17 重大转向：SwiftUI 原生 App**（不再是 Capacitor 网页壳）。
+起因是网页壳里「更新按钮点击没用」——`navigator.share({files})` 文件分享在 WKWebView 沙箱里不可靠。
+参照「巢记 NestKeep」原生工程（`D:\ezbk-native-wt\ios-app\NestKeep.xcodeproj`，已验证的路子）重构。
+
+布局方案 D（原型见 2026-10-14 会话的 Visualizer）：
 **首页=最近笔记卡片流 + 底部速记条（速记落「收件箱」）；底部 4 tab：最近/笔记树(面包屑)/搜索/设置；编辑器全屏。**
-v1 只做这四件事，不做全功能客户端；复杂编辑（表格/代码块/图片）回电脑。
+- 外壳纯 SwiftUI（最近/树/搜索/设置/登录）
+- 编辑器：WKWebView 加载服务端 Trilium 页面（`#root/<noteId>`，表格/代码/图片完整支持）
+- 数据访问：ETAPI REST（原生 URLSession）
+- 应用内更新：抄巢记 UpdateChecker（并行查双源取最大版本 / 下载到 Caches / 系统分享面板选 TrollStore）
+- 构建：GitHub Actions 出 IPA（ad-hoc 签名），语义版本 x.y.z（区别于旧网页壳四段 v1.0.00.x）
 
 ## 二、服务器与环境（关键事实）
 
@@ -41,21 +48,30 @@ v1 只做这四件事，不做全功能客户端；复杂编辑（表格/代码�
 ## 三、本工程结构（D:\trilium-mobile）
 
 ```
-capacitor.config.ts      appId=com.hhxxc.trilium，appName=Trilium，纯打包应用（非远程壳）
-src/config.js            默认服务器地址（ddnsto 公网 https://dsm920-ddsnto-trilium-notes.x.ddnsto.com，2026-10-15 起；
-                         原默认 31.198:18190、备用 188.2:18190 已移除——星空地址弃用）、收件箱标题
-src/api.js               ETAPI 客户端：login/token、getNote、getContent/putContent、
-                         patchNote、createNote、searchNotes、recentNotes、ensureInbox、localStorage 缓存
-src/App.vue              4 tab 容器 + 编辑器全屏路由
-src/views/RecentView.vue 首页：最近 30 条 + 速记条（HTML 转义后写入收件箱）
-src/views/TreeView.vue   面包屑层级浏览（childNoteIds 逐个拉取）
-src/views/SearchView.vue 全文搜索
-src/views/SettingsView.vue 服务器+密码登录（存 localStorage）
-src/views/EditorView.vue 全屏编辑：改标题 + text/code 笔记改正文（PUT content 原样回写）
-.github/workflows/build-ios-ipa.yml  push main 自动出 IPA（vite build → cap add/sync ios →
-                         Info.plist 打 ATS 补丁(NSAllowsArbitraryLoads=true，因为服务器是 http)
-                         → sharp 生成图标 → pod install → xcodebuild 归档 → 打包 IPA → gh release）
-public/logo.svg          App 图标（青绿树形，workflow 里自动切全套尺寸）
+ios-app/                      SwiftUI 工程（原生 App）
+  TriliumMobile/
+    TriliumMobileApp.swift    入口（@main）
+    Core/AppConfig.swift      默认服务器地址/收件箱标题/仓库名
+    Core/AppSettings.swift    服务器+token 持久化（UserDefaults）
+    Core/ETAPIClient.swift    ETAPI 客户端（原生 URLSession）
+    Core/UpdateChecker.swift  更新检测（抄巢记：并行查双源/下载/分享面板）
+    Models/Note.swift         笔记数据模型
+    Views/RootView.swift      登录门禁 + 4 Tab 容器
+    Views/LoginView.swift     服务器+密码登录
+    Views/RecentView.swift    最近笔记流 + 速记条
+    Views/TreeView.swift      面包屑树浏览
+    Views/SearchView.swift    全文搜索
+    Views/SettingsView.swift  连接/退出/检查更新
+    Views/EditorView.swift    WKWebView 加载服务端编辑器
+    Info.plist                含 LSApplicationQueriesSchemes:apple-magnifier + ATS 放行 http
+    Assets.xcassets/          App 图标 + logo.svg
+  gen_pbxproj.py              生成 .xcodeproj（Windows 上跑，增删 Swift 文件重跑同步）
+  TriliumMobile.xcodeproj/    生成的工程文件（进 git）
+.github/workflows/build-native-ios.yml  云端出包：生成工程 → 注入版本 → sharp 图标 → xcodebuild → 打包 IPA → 发版
+scripts/gh_push.py           推送工具（走 GitHub Git Data API，绕开本机代理）
+scripts/nas/                 NAS 自动同步（trilium_autosync.sh 拉 Release 最新 IPA + 刷新清单）
+scripts/nas_publish_trilium.py 手动发版（备用）
+public/logo.svg              已迁移到 ios-app/TriliumMobile/Assets.xcassets/logo.svg
 ```
 
 ## 四、ETAPI 要点（Trilium 0.106）

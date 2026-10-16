@@ -1,7 +1,3 @@
-node_modules/
-dist/
-ios/
-android/
 *.ipa
 builds/
 HANDOFF.local.md
@@ -11,3 +7,4 @@ nas_config_local.py
 nas_config.local.py
 .workbuddy/
 .ci-tmp/
+ios-app/build/
