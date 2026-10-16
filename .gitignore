@@ -10,3 +10,4 @@ __pycache__/
 nas_config_local.py
 nas_config.local.py
 .workbuddy/
+.ci-tmp/

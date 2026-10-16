@@ -16,9 +16,73 @@ import argparse
 import base64
 import json
 import os
+import socket
+import ssl
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
+
+
+# ---------------------------------------------------------------------------
+# 网络：本机 DNS 经常解析超时（但直连 IP 可通），gh CLI 因此报 Bad Gateway。
+# 这里优先用 urllib 直连已知可用 IP（等价 curl --resolve），失败才回退 gh CLI。
+# 可用 IP 可用 `curl --resolve api.github.com:443:<ip> https://api.github.com` 探测。
+# ---------------------------------------------------------------------------
+GITHUB_IP = os.environ.get("GH_API_IP", "140.82.113.6")
+_CODELOAD_IP = os.environ.get("GH_CODELOAD_IP", "140.82.113.9")
+
+_orig_getaddrinfo = socket.getaddrinfo
+
+
+def _install_dns_override():
+    """把 GitHub 域名解析到已知 IP，绕开本机坏掉的 DNS。"""
+    hosts = {"api.github.com": GITHUB_IP, "codeload.github.com": _CODELOAD_IP}
+
+    def patched(host, port, *a, **k):
+        if host in hosts:
+            fam = socket.AF_INET
+            return [(fam, socket.SOCK_STREAM, 6, "", (hosts[host], port))]
+        return _orig_getaddrinfo(host, port, *a, **k)
+
+    socket.getaddrinfo = patched
+
+
+def _no_proxy_env():
+    """清掉代理环境变量：本机代理会拦 git/API 请求（502），直连更可靠。"""
+    for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY",
+              "ALL_PROXY", "all_proxy"):
+        os.environ.pop(k, None)
+
+
+def _gh_token():
+    r = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
+    tok = (r.stdout or "").strip()
+    if not tok or r.returncode != 0:
+        raise SystemExit("拿不到 GitHub token（先 gh auth login）")
+    return tok
+
+
+def _http(path, method="GET", payload=None):
+    """直连 GitHub REST API，返回解析后的 JSON（或原始文本）。"""
+    url = path if path.startswith("http") else "https://api.github.com" + path
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Authorization", "token " + _gh_token())
+    req.add_header("User-Agent", "trilium-mobile-push")
+    req.add_header("Accept", "application/vnd.github+json")
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    ctx = ssl.create_default_context()
+    with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
+        body = r.read().decode("utf-8")
+    if not body:
+        return ""
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        return body
 
 
 def run(cmd, binary=False, input_text=None):
@@ -33,15 +97,23 @@ def git(*args, **kw):
 
 
 def gh_api(path, payload=None, method=None):
-    cmd = ["gh", "api"]
-    if method:
-        cmd += ["-X", method]
-    cmd.append(path)
-    if payload is None:
-        return run(cmd).strip()
-    cmd += ["--input", "-"]
-    out = run(cmd, input_text=json.dumps(payload))
-    return out
+    """GitHub API 调用。优先直连 IP（绕开坏 DNS 和代理），失败回退 gh CLI。"""
+    try:
+        result = _http(path, method=method or "GET", payload=payload)
+        return result if isinstance(result, str) else json.dumps(result)
+    except urllib.error.HTTPError as e:
+        raise SystemExit("GitHub API %s %s → HTTP %s\n%s"
+                         % (method or "GET", path, e.code, e.read().decode("utf-8", "replace")[:400]))
+    except Exception as e:  # noqa: BLE001 —— 回退到 gh CLI
+        sys.stderr.write("直连失败（%s），回退 gh CLI…\n" % e)
+        cmd = ["gh", "api"]
+        if method:
+            cmd += ["-X", method]
+        cmd.append(path)
+        if payload is None:
+            return run(cmd).strip()
+        cmd += ["--input", "-"]
+        return run(cmd, input_text=json.dumps(payload))
 
 
 def repo_slug():
@@ -67,6 +139,9 @@ def ident(line):
 
 
 def main():
+    _no_proxy_env()
+    _install_dns_override()
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--branch", default=None, help="分支名，默认取当前分支")
     args = ap.parse_args()
@@ -75,7 +150,8 @@ def main():
     local_head = git("rev-parse", "HEAD").strip()
 
     # 仓库为空时 Git Data API 会 409，先用 Contents API 造一次提交激活
-    is_empty = json.loads(run(["gh", "repo", "view", slug, "--json", "isEmpty"])).get("isEmpty")
+    repo = json.loads(gh_api("/repos/%s" % slug))
+    is_empty = repo.get("isEmpty")
     if is_empty:
         gh_api("/repos/%s/contents/README.md" % slug, {
             "message": "chore: 初始化仓库",
