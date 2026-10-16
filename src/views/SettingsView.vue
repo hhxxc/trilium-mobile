@@ -5,7 +5,7 @@ import { loadSettings, saveSettings, login, logout, appInfo, resetAuthExpiredFla
 
 const props = defineProps({ notice: { type: String, default: '' } });
 const emit = defineEmits(['notice-consumed']);
-import { APP_VERSION, checkUpdate, startTrollStoreUpdate, probeManifest, downloadDirect } from '../update.js';
+import { APP_VERSION, checkUpdate, startTrollStoreUpdate, probeManifest } from '../update.js';
 
 const settings = loadSettings();
 const server = ref(settings.server);
@@ -101,22 +101,16 @@ async function doCheckUpdate(silent = false) {
   }
 }
 
-/** 逐个协议尝试拉起安装器；iOS 无法用代码判断跳转是否成功，所以把三种都摆出来让用户点 */
+/** 拉起安装器（巢记模式：一个按钮，直接打开放大镜/TrollStore 下载安装，覆盖装数据保留） */
 function doUpdate(schemeKey = 'apple-magnifier', label = 'TrollStore') {
   if (!upd.value) return;
   installing.value = label;
   try {
     startTrollStoreUpdate(upd.value.ipaUrl, schemeKey);
-    updMsg.value = `已尝试拉起 ${label}。若没反应，请用下面的备用方式。`;
+    updMsg.value = `已打开放大镜（${label}），它会下载并覆盖安装，数据保留。`;
   } catch (e) {
     updMsg.value = '拉起失败：' + (e.message || e);
   }
-}
-
-function doDownload() {
-  if (!upd.value) return;
-  downloadDirect(upd.value.ipaUrl);
-  updMsg.value = '已发起下载，去「文件」里会看到 IPA（TrollStore 也能直接打开 IPA 安装）。';
 }
 
 function copyDetail() {
@@ -175,11 +169,7 @@ onMounted(() => { doCheckUpdate(true); });
   <button class="btn secondary" :disabled="updChecking" @click="doCheckUpdate(false)">{{ updChecking ? '检查中…' : '检查更新' }}</button>
 
   <template v-if="upd && upd.hasUpdate">
-    <button class="btn" @click="doUpdate('apple-magnifier', 'TrollStore')">用 TrollStore 更新到 v{{ upd.latest }}</button>
-    <button class="btn secondary" @click="doUpdate('altstore', 'AltStore')">用 AltStore 更新</button>
-    <button class="btn secondary" @click="doUpdate('sidestore', 'SideStore')">用 SideStore 更新</button>
-    <button class="btn secondary" @click="doDownload">直接下载 IPA</button>
-    <p style="font-size:12px; color:var(--muted); margin:4px 16px 8px;">上面三个安装器任选其一（哪个装的就点哪个）。都没反应就直接下载 IPA，在「文件」里点开用安装器装（覆盖安装、数据保留）。</p>
+    <button class="btn" @click="doUpdate('apple-magnifier', 'TrollStore')">更新到 v{{ upd.latest }}</button>
   </template>
 
   <button class="btn secondary" style="margin-top:8px;" @click="showDetail = !showDetail">
