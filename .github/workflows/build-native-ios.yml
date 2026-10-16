@@ -1,0 +1,175 @@
+name: Build Trilium Mobile Native IPA (TrollStore)
+
+# 原生 iOS App（SwiftUI）云端构建：GitHub 托管 macOS 运行机上用 Xcode 编译，
+# 产出 IPA 供 TrollStore 安装。无需本地 Mac、无需付费开发者证书。
+#
+# 触发：
+#   - 推送 main 且改动 ios-app/ 下任何文件或本工作流时自动构建，并自动发语义版本 Release
+#   - 手动 workflow_dispatch
+#
+# 版本号：语义版本 x.y.z（纯三段，无前导零），patch 满 9 进位 minor。
+# 出包文件名：trilium-mobile-v<语义版本>.ipa
+# 出包后：手机上用 TrollStore 打开 IPA 安装（重新签名、永久驻留）。
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ios-app/**'
+      - '.github/workflows/build-native-ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Compute app version (auto patch+1 on push)
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 查现有语义版本 tag（vX.Y.Z），取最大 patch 推进一位
+          LATEST="$(gh api "repos/${{ github.repository }}/releases?per_page=100" --jq '.[].tag_name' \
+            | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" \
+            | sed -E "s/^v//" \
+            | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+          if [ -z "$LATEST" ]; then
+            LATEST="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' ios-app/TriliumMobile/Info.plist)"
+          fi
+          V="$(echo "$LATEST" | awk -F. '{ if ($3 >= 9) printf "%d.%d.0", $1, $2+1; else printf "%d.%d.%d", $1, $2, $3+1 }')"
+          if [ -z "$V" ]; then V="1.0.0"; fi
+          echo "app_version=$V" >> "$GITHUB_OUTPUT"
+          # ★ 资产名固定为 trilium-mobile.ipa：NAS autosync 靠
+          #   /releases/latest/download/trilium-mobile.ipa 这个永久地址定位+下载，
+          #   文件名变了会导致 autosync 失效。版本号由 tag（vX.Y.Z）承载。
+          echo "IPA_NAME=trilium-mobile.ipa" >> "$GITHUB_ENV"
+          echo "==> 版本 $V，IPA 资产名 trilium-mobile.ipa（固定，供 NAS autosync）"
+
+      - name: Generate project.pbxproj
+        working-directory: ios-app
+        run: python3 gen_pbxproj.py
+
+      - name: Inject app version into Info.plist
+        working-directory: ios-app
+        run: |
+          PLIST="TriliumMobile/Info.plist"
+          V="${{ steps.version.outputs.app_version }}"
+          B="${{ github.run_number }}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $V" "$PLIST" \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $V" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $B" "$PLIST" \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $B" "$PLIST"
+          echo "==> App 版本注入为 $V ($B)"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST"
+          sed -i '' "s/MARKETING_VERSION = [0-9.]*;/MARKETING_VERSION = $V;/g" TriliumMobile.xcodeproj/project.pbxproj
+          sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*;/CURRENT_PROJECT_VERSION = $B;/g" TriliumMobile.xcodeproj/project.pbxproj
+
+      - name: Generate App Icons
+        run: |
+          npm install --no-save sharp
+          node -e "
+            const fs = require('fs');
+            const sharp = require('sharp');
+            const svg = fs.readFileSync('public/logo.svg', 'utf8');
+            sharp(Buffer.from(svg)).resize(1024,1024).png().toFile('/tmp/icon.png');
+          "
+          DST="ios-app/TriliumMobile/Assets.xcassets/AppIcon.appiconset"
+          # 生成各尺寸图标（文件名对齐 Contents.json）
+          sips -z 40 40 /tmp/icon.png --out "$DST/icon-20x20@2x.png"
+          sips -z 60 60 /tmp/icon.png --out "$DST/icon-20x20@3x.png"
+          sips -z 58 58 /tmp/icon.png --out "$DST/icon-29x29@2x.png"
+          sips -z 87 87 /tmp/icon.png --out "$DST/icon-29x29@3x.png"
+          sips -z 80 80 /tmp/icon.png --out "$DST/icon-40x40@2x.png"
+          sips -z 120 120 /tmp/icon.png --out "$DST/icon-40x40@3x.png"
+          sips -z 120 120 /tmp/icon.png --out "$DST/icon-60x60@2x.png"
+          sips -z 180 180 /tmp/icon.png --out "$DST/icon-60x60@3x.png"
+          sips -z 20 20 /tmp/icon.png --out "$DST/icon-20x20@1x.png"
+          sips -z 29 29 /tmp/icon.png --out "$DST/icon-29x29@1x.png"
+          sips -z 40 40 /tmp/icon.png --out "$DST/icon-40x40@1x.png"
+          sips -z 76 76 /tmp/icon.png --out "$DST/icon-76x76@1x.png"
+          sips -z 152 152 /tmp/icon.png --out "$DST/icon-76x76@2x.png"
+          sips -z 167 167 /tmp/icon.png --out "$DST/icon-83.5x83.5@2x.png"
+          cp /tmp/icon.png "$DST/icon-1024x1024@1x.png"
+          ls -la "$DST" | grep -i png | head -20
+
+      - name: Build app (ad-hoc signed, no Apple cert needed)
+        working-directory: ios-app
+        run: |
+          xcodebuild build \
+            -project TriliumMobile.xcodeproj \
+            -scheme TriliumMobile \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/dd \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package IPA (TrollStore will re-sign on device)
+        working-directory: ios-app
+        run: |
+          APP="build/dd/Build/Products/Release-iphoneos/TriliumMobile.app"
+          mkdir -p Payload
+          cp -r "$APP" Payload/
+          codesign --force --sign - --entitlements TriliumMobile/TriliumMobile.entitlements Payload/TriliumMobile.app
+          rm -rf build/dd
+          zip -r "$IPA_NAME" Payload
+          rm -rf Payload
+          ls -la "$IPA_NAME"
+
+      - name: Verify IPA 关键键（Bundle ID / 版本 / scheme 白名单）
+        working-directory: ios-app
+        run: |
+          mkdir -p verify && cd verify
+          unzip -q "../$IPA_NAME" -d .
+          P="Payload/TriliumMobile.app/Info.plist"
+          BID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$P")
+          VER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$P")
+          echo "  Bundle ID : $BID"
+          echo "  版本      : $VER"
+          echo "  scheme 白名单 :"
+          /usr/libexec/PlistBuddy -c 'Print :LSApplicationQueriesSchemes' "$P"
+          fail=0
+          if [ "$BID" != "com.hhxxc.trilium" ]; then
+            echo "::error::Bundle ID 不符：期望 com.hhxxc.trilium，实际 $BID"
+            fail=1
+          fi
+          if ! /usr/libexec/PlistBuddy -c 'Print :LSApplicationQueriesSchemes' "$P" | grep -q apple-magnifier; then
+            echo "::error::缺少 LSApplicationQueriesSchemes: apple-magnifier"
+            fail=1
+          fi
+          cd .. && rm -rf verify
+          exit $fail
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trilium-mobile-ipa
+          path: ios-app/${{ env.IPA_NAME }}
+          retention-days: 90
+
+      - name: Publish semantic version release (for in-app update check)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${{ steps.version.outputs.app_version }}"
+          if gh release view "v$V" >/dev/null 2>&1; then
+            echo "==> tag v$V 已存在，跳过发版"
+            exit 0
+          fi
+          gh release create "v$V" "ios-app/${{ env.IPA_NAME }}" \
+            --title "Trilium Mobile v$V" \
+            --notes "Trilium 手机伴侣端（SwiftUI 原生）v$V。用 TrollStore 打开 IPA 覆盖安装（同变体才会覆盖）。"
