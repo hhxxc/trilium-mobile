@@ -5,7 +5,7 @@ import { loadSettings, saveSettings, login, logout, appInfo, resetAuthExpiredFla
 
 const props = defineProps({ notice: { type: String, default: '' } });
 const emit = defineEmits(['notice-consumed']);
-import { APP_VERSION, checkUpdate, startTrollStoreUpdate, probeManifest } from '../update.js';
+import { APP_VERSION, checkUpdate, startTrollStoreUpdate, probeManifest, downloadDirect } from '../update.js';
 
 const settings = loadSettings();
 const server = ref(settings.server);
@@ -75,25 +75,69 @@ async function doDiagnose() {
 const upd = ref(null);        // checkUpdate() 的结果
 const updMsg = ref('');       // 检查/更新过程提示
 const updChecking = ref(false);
+const updDetail = ref('');    // 诊断细节（通道/HTTP/content-type/字节数）
+const showDetail = ref(false);
+const installing = ref('');   // 正在尝试的安装器名字
 
 async function doCheckUpdate(silent = false) {
   if (!silent) updChecking.value = true;
   updMsg.value = silent ? '' : '检查中…';
+  updDetail.value = '';
   try {
     upd.value = await checkUpdate();
-    if (upd.value.hasUpdate) updMsg.value = '';
-    else updMsg.value = silent ? '' : '已是最新版本';
+    updDetail.value =
+      `通道 ${upd.via}｜HTTP 200｜content-type ${upd.contentType || '(无)'}｜${upd.bytes} 字节\n` +
+      `本地 v${upd.current} → 云端 v${upd.latest}`;
+    if (upd.value.hasUpdate) {
+      updMsg.value = `发现新版本 v${upd.value.latest}`;
+    } else {
+      updMsg.value = silent ? '' : `已是最新版本（v${upd.value.latest}）`;
+    }
   } catch (e) {
+    upd.value = null;
     if (!silent) updMsg.value = '检查失败：' + (e.message || '网络不可达');
   } finally {
     updChecking.value = false;
   }
 }
 
-function doUpdate() {
+/** 逐个协议尝试拉起安装器；iOS 无法用代码判断跳转是否成功，所以把三种都摆出来让用户点 */
+function doUpdate(schemeKey = 'apple-magnifier', label = 'TrollStore') {
   if (!upd.value) return;
-  updMsg.value = '正在拉起 TrollStore…（它会下载并覆盖安装，数据保留）';
-  startTrollStoreUpdate(upd.value.ipaUrl);
+  installing.value = label;
+  try {
+    startTrollStoreUpdate(upd.value.ipaUrl, schemeKey);
+    updMsg.value = `已尝试拉起 ${label}。若没反应，请用下面的备用方式。`;
+  } catch (e) {
+    updMsg.value = '拉起失败：' + (e.message || e);
+  }
+}
+
+function doDownload() {
+  if (!upd.value) return;
+  downloadDirect(upd.value.ipaUrl);
+  updMsg.value = '已发起下载，去「文件」里会看到 IPA（TrollStore 也能直接打开 IPA 安装）。';
+}
+
+function copyDetail() {
+  const text = genCopyText();
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text)
+      .then(() => (updMsg.value = '已复制诊断信息'))
+      .catch(() => (updDetail.value = text));
+  } else {
+    updDetail.value = text;
+  }
+}
+
+function genCopyText() {
+  return [
+    `当前版本：v${APP_VERSION}`,
+    upd.value ? `云端版本：v${upd.value.latest}` : '云端版本：未取到',
+    upd.value ? `清单通道：${upd.value.via}` : '',
+    updDetail.value,
+    updMsg.value,
+  ].filter(Boolean).join('\n');
 }
 
 onMounted(() => { doCheckUpdate(true); });
@@ -129,5 +173,20 @@ onMounted(() => { doCheckUpdate(true); });
   </div>
   <p v-if="updMsg" style="font-size:13px; color:var(--muted); margin:8px 16px;">{{ updMsg }}</p>
   <button class="btn secondary" :disabled="updChecking" @click="doCheckUpdate(false)">{{ updChecking ? '检查中…' : '检查更新' }}</button>
-  <button v-if="upd && upd.hasUpdate" class="btn" @click="doUpdate">更新到 v{{ upd.latest }}</button>
+
+  <template v-if="upd && upd.hasUpdate">
+    <button class="btn" @click="doUpdate('apple-magnifier', 'TrollStore')">用 TrollStore 更新到 v{{ upd.latest }}</button>
+    <button class="btn secondary" @click="doUpdate('altstore', 'AltStore')">用 AltStore 更新</button>
+    <button class="btn secondary" @click="doUpdate('sidestore', 'SideStore')">用 SideStore 更新</button>
+    <button class="btn secondary" @click="doDownload">直接下载 IPA</button>
+    <p style="font-size:12px; color:var(--muted); margin:4px 16px 8px;">上面三个安装器任选其一（哪个装的就点哪个）。都没反应就直接下载 IPA，在「文件」里点开用安装器装（覆盖安装、数据保留）。</p>
+  </template>
+
+  <button class="btn secondary" style="margin-top:8px;" @click="showDetail = !showDetail">
+    {{ showDetail ? '收起诊断信息' : '显示诊断信息' }}
+  </button>
+  <template v-if="showDetail">
+    <pre style="font-size:12px; color:var(--muted); margin:8px 16px; white-space:pre-wrap; line-height:1.6; font-family:inherit;">{{ updDetail || '（先点一次「检查更新」）' }}</pre>
+    <button class="btn secondary" @click="copyDetail">复制诊断信息</button>
+  </template>
 </template>
