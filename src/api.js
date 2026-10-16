@@ -31,6 +31,71 @@ export function saveSettings(patch) {
 export const api = axios.create({ baseURL: loadSettings().server, timeout: 15000 });
 api.defaults.headers.common.Authorization = loadSettings().token;
 
+// ---------- 401 全局处理 ----------
+// 服务端一旦重启/换令牌，存着的 ETAPI token 就失效了，此后每个请求都是 401。
+// 老版本只是把 401 当成普通错误显示在页面上，于是 App 卡在"已登录但全 401"的死状态，
+// 永远进不了登录页（2026-10-16 用户实测反馈）。这里统一拦截：清掉本地 token 并广播事件，
+// 由 App.vue 把界面踢回设置页重新登录。
+export const AUTH_EXPIRED_EVENT = 'trilium-mobile-auth-expired';
+let authExpiredFired = false;
+
+api.interceptors.response.use(
+  (r) => r,
+  (e) => {
+    const status = e && e.response && e.response.status;
+    // 登录接口本身返回 401 = 密码错，不该触发"会话过期"
+    const url = (e && e.config && e.config.url) || '';
+    if (status === 401 && !/\/auth\/login/.test(url)) {
+      if (!authExpiredFired) {
+        authExpiredFired = true;
+        try { saveSettings({ token: '' }); } catch { /* 忽略 */ }
+        try { window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT)); } catch { /* 忽略 */ }
+      }
+    }
+    return Promise.reject(e);
+  },
+);
+
+/** 登录成功后重置标记，允许下一次过期再触发（避免只生效一次） */
+export function resetAuthExpiredFlag() { authExpiredFired = false; }
+
+/** 连接自检：逐段探测，返回可读的诊断文本。出问题时不用猜是哪一环挂了。 */
+export async function diagnose(server, token) {
+  const base = String(server || '').replace(/\/+$/, '');
+  const lines = [];
+  lines.push('地址：' + base);
+  lines.push('本地 token：' + (token ? token.slice(0, 6) + '…（' + token.length + ' 位）' : '（无）'));
+
+  // 1) 服务是否活着：不带鉴权打 app-info，401 = 服务在（只是需要令牌），200 = 服务在且免鉴权
+  try {
+    const r = await axios.get(base + '/etapi/app-info', { timeout: 15000, validateStatus: () => true });
+    lines.push('服务可达：是（HTTP ' + r.status + '）');
+    if (r.data && r.data.appVersion) lines.push('服务版本：' + r.data.appVersion);
+  } catch (e) {
+    const how = e.response ? 'HTTP ' + e.response.status : (e.message || '网络错误');
+    lines.push('服务可达：否（' + how + '）');
+    lines.push('→ 地址写错了、不在同一网络、或 NAS 又断了');
+    return lines.join('\n');
+  }
+
+  // 2) 令牌是否有效
+  if (!token) {
+    lines.push('令牌有效性：未登录（请在上面输入密码登录）');
+    return lines.join('\n');
+  }
+  try {
+    const r = await axios.get(base + '/etapi/notes/root', {
+      headers: { Authorization: token }, timeout: 15000, validateStatus: () => true,
+    });
+    if (r.status === 200) lines.push('令牌有效性：有效');
+    else if (r.status === 401) lines.push('令牌有效性：失效（服务端重启过就会这样）→ 重新输入密码登录即可');
+    else lines.push('令牌有效性：异常（HTTP ' + r.status + '）');
+  } catch (e) {
+    lines.push('令牌有效性：无法判断（' + (e.message || '网络错误') + '）');
+  }
+  return lines.join('\n');
+}
+
 // ---------- 认证 ----------
 
 /** 用密码换 ETAPI token；ETAPI 无独立账号体系，密码 = 登录密码。

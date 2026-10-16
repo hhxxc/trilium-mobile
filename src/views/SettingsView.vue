@@ -1,7 +1,10 @@
 <script setup>
 // 设置：服务器地址 + 密码登录（换 ETAPI token）；启动锁（账号 + 本地解锁密码）
-import { ref, onMounted } from 'vue';
-import { loadSettings, saveSettings, login, logout, appInfo } from '../api.js';
+import { ref, onMounted, watch } from 'vue';
+import { loadSettings, saveSettings, login, logout, appInfo, resetAuthExpiredFlag, diagnose } from '../api.js';
+
+const props = defineProps({ notice: { type: String, default: '' } });
+const emit = defineEmits(['notice-consumed']);
 import { isLockEnabled, setLockPassword, clearLock, LOCK_ACCOUNT } from '../lock.js';
 import { APP_VERSION, checkUpdate, startTrollStoreUpdate } from '../update.js';
 
@@ -12,11 +15,17 @@ const status = ref('');
 const loggedIn = ref(!!settings.token);
 const info = ref(null);
 
+// 从外部（如 token 失效被踢回来）带进来的提示，直接显示出来
+watch(() => props.notice, (v) => {
+  if (v) { status.value = v; emit('notice-consumed'); }
+}, { immediate: true });
+
 async function doLogin() {
   status.value = '连接中…';
   try {
     const token = await login(server.value, password.value);
     saveSettings({ server: server.value.replace(/\/+$/, ''), token });
+    resetAuthExpiredFlag();
     loggedIn.value = true;
     password.value = '';
     try { info.value = await appInfo(); } catch { info.value = null; }
@@ -41,6 +50,21 @@ async function doLogout() {
   saveSettings({ token: '' });
   loggedIn.value = false;
   status.value = '已退出';
+}
+
+// ---------- 连接自检 ----------
+const diagOut = ref('');
+const diagBusy = ref(false);
+async function doDiagnose() {
+  diagBusy.value = true;
+  diagOut.value = '检测中…';
+  try {
+    diagOut.value = await diagnose(server.value, loadSettings().token);
+  } catch (e) {
+    diagOut.value = '检测异常：' + (e.message || e);
+  } finally {
+    diagBusy.value = false;
+  }
 }
 
 // ---------- 启动锁 ----------
@@ -117,6 +141,8 @@ onMounted(() => { doCheckUpdate(true); });
     <button class="btn secondary" @click="doLogout">退出登录</button>
   </template>
   <p v-if="status" style="font-size:13px; color:var(--muted); margin:8px 16px;">{{ status }}</p>
+  <button class="btn secondary" :disabled="diagBusy" @click="doDiagnose">{{ diagBusy ? '检测中…' : '连接自检' }}</button>
+  <pre v-if="diagOut" style="font-size:12px; color:var(--muted); margin:8px 16px; white-space:pre-wrap; line-height:1.6; font-family:inherit;">{{ diagOut }}</pre>
 
   <div class="card" style="margin-top:20px;">
     <div class="title">更新</div>

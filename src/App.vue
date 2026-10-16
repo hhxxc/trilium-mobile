@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { loadSettings } from './api.js';
+import { loadSettings, AUTH_EXPIRED_EVENT } from './api.js';
 import { isLockEnabled, markBackgrounded, shouldRelockOnResume, markUnlocked, isRecentlyUnlocked, clearUnlockGrace } from './lock.js';
 import LockView from './views/LockView.vue';
 import RecentView from './views/RecentView.vue';
@@ -45,15 +45,25 @@ function onHide() { markBackgrounded(); }
 function onShow() { if (shouldRelockOnResume()) { clearUnlockGrace(); locked.value = true; } }
 function onVisibility() { if (document.hidden) onHide(); else onShow(); }
 
+// token 失效（服务端重启等）→ 关掉编辑器、踢回设置页重新登录
+const authNotice = ref('');
+function onAuthExpired() {
+  editorNoteId.value = null;
+  tab.value = 'settings';
+  authNotice.value = '登录已失效（服务器可能重启过），请重新输入密码';
+}
+
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibility);
   window.addEventListener('pagehide', onHide);
   window.addEventListener('pageshow', onShow);
+  window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
 });
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', onVisibility);
   window.removeEventListener('pagehide', onHide);
   window.removeEventListener('pageshow', onShow);
+  window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
 });
 </script>
 
@@ -65,7 +75,7 @@ onUnmounted(() => {
       <RecentView v-if="tab === 'recent'" @open="openNote" @settings="tab = 'settings'" />
       <TreeView v-else-if="tab === 'tree'" @open="openNote" />
       <SearchView v-else-if="tab === 'search'" @open="openNote" />
-      <SettingsView v-else />
+      <SettingsView v-else :notice="authNotice" @notice-consumed="authNotice = ''" />
     </div>
     <nav class="tabbar">
       <button
