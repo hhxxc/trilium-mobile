@@ -69,6 +69,24 @@ async function fetchManifest() {
   return (await fetchManifestDetailed()).data;
 }
 
+/**
+ * 把各通道返回的清单统一成对象。
+ * CapacitorHttp 原生层在 content-type 含 json 时**已经解析过了**（res.data 是对象），
+ * 再 JSON.parse 一次就会抛 "cannot parse response"；而 axios/fetch 可能给字符串。
+ * 这里统一兜住：对象直接用，字符串才 parse，解析失败就给出可读错误。
+ */
+function normalizeManifest(raw) {
+  if (raw && typeof raw === 'object') return raw;
+  if (typeof raw !== 'string' || !raw.trim()) {
+    throw new Error('清单为空（HTTP 层成功但无响应体）');
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error('清单不是合法 JSON：' + raw.slice(0, 60));
+  }
+}
+
 async function fetchManifestDetailed() {
   // 通道① 直接调 CapacitorHttp 插件的原生 request（只支持原生平台；web 上会 throw）
   //   这条等价于笔记写操作走的稳定路径，不经过 patch 后的 fetch proxy。
@@ -85,14 +103,15 @@ async function fetchManifestDetailed() {
         readTimeout: 20000,
       });
       if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
-      // 原生通道在 content-type 是 json 时可能已把 data 解析成对象
-      return typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+      // ⚠️ 原生层会按 content-type 自动解析：application/json 时 res.data 已是**对象**，
+      // 不要再 JSON.parse 一次（否则 "cannot parse response"）。只有拿到字符串才 parse。
+      return normalizeManifest(res.data);
     }],
-    ['axios', async () => (await axios.get(MANIFEST_URL, { timeout: 20000, headers: { 'Cache-Control': 'no-cache' } })).data],
+    ['axios', async () => normalizeManifest((await axios.get(MANIFEST_URL, { timeout: 20000, headers: { 'Cache-Control': 'no-cache' } })).data)],
     ['fetch', async () => {
       const r = await fetch(MANIFEST_URL, { cache: 'no-store' });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
+      return normalizeManifest(await r.text());
     }],
   ];
   const errs = [];
