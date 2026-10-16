@@ -102,17 +102,21 @@ async function fetchManifestDetailed() {
   const attempts = [
     ['capacitor-http', async () => {
       const { CapacitorHttp } = await import('@capacitor/core');
+      // ⚠️ 原生层（HttpRequestHandler.buildResponse）只要 content-type 含 application/json
+      // 就强制 tryParseJson，失败时把「错误描述字符串」当 data 返回——污染数据且无法用
+      // responseType:'text' 绕开（json 分支优先级更高）。
+      // 唯一干净的绕法：responseType:'arraybuffer' → 原生走 base64 分支，JS 端自己解码。
       const res = await CapacitorHttp.request({
         url: MANIFEST_URL,
         method: 'GET',
+        responseType: 'arraybuffer',
         headers: { 'Cache-Control': 'no-cache', Accept: 'application/json,*/*' },
         connectTimeout: 20000,
         readTimeout: 20000,
       });
       if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
-      const raw = res.data;
-      const bytes = typeof raw === 'string' ? raw.length : JSON.stringify(raw || '').length;
-      return { data: normalizeManifest(raw), contentType: headerOf(res.headers, 'content-type'), bytes };
+      const text = b64ToUtf8(res.data);
+      return { data: normalizeManifest(text), contentType: headerOf(res.headers, 'content-type'), bytes: text.length };
     }],
     ['axios', async () => {
       const r = await axios.get(MANIFEST_URL, {
@@ -144,6 +148,18 @@ function headerOf(headers, name) {
   if (!headers || typeof headers !== 'object') return '';
   const key = Object.keys(headers).find((k) => k.toLowerCase() === name);
   return key ? String(headers[key]) : '';
+}
+
+/** base64 → UTF-8 字符串（原生 arraybuffer 通道返回 base64） */
+function b64ToUtf8(b64) {
+  if (typeof b64 !== 'string') {
+    // 理论上不该发生；万一原生直接给了字符串/对象，原样交回上层处理
+    return typeof b64 === 'object' && b64 !== null ? b64 : String(b64 ?? '');
+  }
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(bytes);
 }
 
 /** 该安装器协议是否可用（跳转前先探一下，不可用就别乱跳） */
