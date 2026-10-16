@@ -194,6 +194,17 @@ body { font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif; 
 }
 .upd-title { font-size: 20px; font-weight: 700; color: var(--text); }
 .upd-sub { font-size: 14px; color: var(--muted); }
+.upd-icon-dl { opacity: 0.9; }
+
+/* 下载进度条（点此安装下方，细条） */
+.dl-bar {
+  height: 6px; border-radius: 3px; background: var(--fill-2);
+  margin: 4px 16px 0; overflow: hidden;
+}
+.dl-bar-in {
+  height: 100%; border-radius: 3px; background: var(--tint);
+  transition: width 0.2s ease;
+}
 
 /* 编辑器正文 */
 .editor-text {

@@ -177,6 +177,74 @@ function b64ToUtf8(b64) {
   return new TextDecoder('utf-8').decode(bytes);
 }
 
+/** base64 → 原始字节（arraybuffer 通道） */
+function b64ToBytes(b64) {
+  const bin = atob(String(b64 || ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+const IPA_CHUNK = 131072; // 128KB 分段，与已验证稳定的清单请求同量级
+
+/**
+ * 分段下载 IPA（带进度回调）。
+ * 逐段走 CapacitorHttp arraybuffer（已验证稳定路径）+ Range 头，
+ * 避免整包 600KB+ 单请求长时间无反馈、以及潜在的大响应 bridge 问题。
+ * onProgress(got, total) 每段回调一次。
+ */
+export async function downloadIpa(url, onProgress) {
+  const { CapacitorHttp } = await import('@capacitor/core');
+  async function getRange(start, end) {
+    const res = await CapacitorHttp.request({
+      url,
+      method: 'GET',
+      responseType: 'arraybuffer',
+      headers: { Range: `bytes=${start}-${end}` },
+      connectTimeout: 20000,
+      readTimeout: 30000,
+    });
+    if (res.status !== 206 && res.status !== 200) throw new Error(`HTTP ${res.status}`);
+    return {
+      bytes: b64ToBytes(res.data),
+      status: res.status,
+      contentRange: headerOf(res.headers, 'content-range'),
+    };
+  }
+
+  const first = await getRange(0, IPA_CHUNK - 1);
+  let total = first.bytes.length;
+  if (first.status === 206 && first.contentRange) {
+    const m = /\/(\d+)\s*$/.exec(first.contentRange);
+    if (m) total = parseInt(m[1], 10);
+  }
+  if (total > 30 * 1024 * 1024) throw new Error('安装包异常偏大，已中止');
+  if (first.status === 200 && !first.contentRange) {
+    // 服务器不支持 Range：已是全量，直接返回
+    if (first.bytes[0] !== 0x50 || first.bytes[1] !== 0x4b) throw new Error('下载内容不是有效的安装包（开头不是 PK）');
+    onProgress && onProgress(total, total);
+    return first.bytes;
+  }
+
+  const parts = [first.bytes];
+  let got = first.bytes.length;
+  onProgress && onProgress(got, total);
+  for (let start = IPA_CHUNK; start < total; start += IPA_CHUNK) {
+    const end = Math.min(start + IPA_CHUNK - 1, total - 1);
+    const seg = await getRange(start, end);
+    parts.push(seg.bytes);
+    got += seg.bytes.length;
+    onProgress && onProgress(got, total);
+  }
+
+  const all = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) { all.set(p, off); off += p.length; }
+  if (all[0] !== 0x50 || all[1] !== 0x4b) throw new Error('下载内容不是有效的安装包（开头不是 PK）');
+  if (off !== total) throw new Error(`分段下载不完整（${off}/${total} 字节）`);
+  return all;
+}
+
 /** 该安装器协议是否可用（跳转前先探一下，不可用就别乱跳） */
 export function installerUrl(schemeKey, ipaUrl) {
   const s = DEFAULT_SCHEMES.find((x) => x.key === schemeKey);

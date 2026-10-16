@@ -5,7 +5,7 @@ import { loadSettings, saveSettings, login, logout, appInfo, resetAuthExpiredFla
 
 const props = defineProps({ notice: { type: String, default: '' } });
 const emit = defineEmits(['notice-consumed']);
-import { APP_VERSION, checkUpdate, startTrollStoreUpdate, probeManifest } from '../update.js';
+import { APP_VERSION, checkUpdate, startTrollStoreUpdate, probeManifest, downloadIpa } from '../update.js';
 
 const settings = loadSettings();
 const server = ref(settings.server);
@@ -79,7 +79,13 @@ const updDetail = ref('');    // 诊断细节（通道/HTTP/content-type/字节�
 const showDetail = ref(false);
 const showSteps = ref(false); // 复制直链后显示安装步骤
 const dlState = ref('idle');  // idle | downloading | ready | error
+const dlPct = ref(0);         // 下载进度 0-100
+const dlBytes = ref('');      // 已下载/总大小（人类可读）
 let ipaFile = null;           // 已下载的 IPA File 对象（内存 ~600KB，可接受）
+
+function fmtKB(n) {
+  return n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB';
+}
 
 async function doCheckUpdate(silent = false) {
   if (!silent) updChecking.value = true;
@@ -105,34 +111,27 @@ async function doCheckUpdate(silent = false) {
   }
 }
 
-/** 下载 IPA 到内存（CapacitorHttp arraybuffer → base64 → File），完成后弹系统分享面板 */
+/** 分段下载 IPA（带进度条），完成后弹系统分享面板 */
 async function doDownloadAndShare() {
   if (!upd.value) return;
   if (dlState.value === 'ready' && ipaFile) { await shareIpaFile(); return; }
   dlState.value = 'downloading';
-  dlMsg.value = '正在下载安装包…';
+  dlPct.value = 0;
+  dlBytes.value = '';
+  updMsg.value = '';
   try {
-    const { CapacitorHttp } = await import('@capacitor/core');
-    const res = await CapacitorHttp.request({
-      url: upd.value.ipaUrl,
-      method: 'GET',
-      responseType: 'arraybuffer',
-      connectTimeout: 30000,
-      readTimeout: 180000,
+    const bytes = await downloadIpa(upd.value.ipaUrl, (got, total) => {
+      dlPct.value = Math.round((got / total) * 100);
+      dlBytes.value = `${fmtKB(got)} / ${fmtKB(total)}`;
     });
-    if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
-    const bin = atob(String(res.data || ''));
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    // 校验 zip 魔数（IPA 本质是 zip），防止把劫持的 HTML 当包分享出去
-    if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) throw new Error('下载内容不是有效的安装包（开头不是 PK）');
     ipaFile = new File([bytes], `Trilium-${upd.value.latest}.ipa`, { type: 'application/octet-stream' });
     dlState.value = 'ready';
-    dlMsg.value = '';
+    dlPct.value = 100;
+    dlBytes.value = fmtKB(bytes.length) + ' 下载完成';
     await shareIpaFile();
   } catch (e) {
     dlState.value = 'error';
-    dlMsg.value = '下载失败：' + (e.message || e);
+    dlMsg.value = '下载失败：' + (e.message || e) + '（点「点此安装」可重试）';
   }
 }
 
@@ -234,16 +233,31 @@ onMounted(() => { doCheckUpdate(true); });
 
   <template v-if="upd && upd.hasUpdate">
     <div class="upd-hero">
-      <div class="upd-icon">
-        <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+      <div class="upd-icon" :class="{ 'upd-icon-dl': dlState === 'downloading' }">
+        <svg v-if="dlState !== 'downloading'" width="30" height="30" viewBox="0 0 24 24" fill="none">
           <path d="M12 4v12m0 0l-5-5m5 5l5-5" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <svg v-else class="pull-spin spin" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round">
+          <path d="M12 3a9 9 0 1 1-8.5 6" />
         </svg>
       </div>
       <div class="upd-title">发现新版本 v{{ upd.latest }}</div>
       <div class="upd-sub">当前版本 v{{ upd.current }}</div>
     </div>
+    <template v-if="dlState === 'downloading'">
+      <div class="dl-bar"><div class="dl-bar-in" :style="{ width: dlPct + '%' }"></div></div>
+      <p style="text-align:center; font-size:13px; color:var(--muted); margin:8px 16px 4px;">
+        正在下载 {{ dlPct }}%{{ dlBytes ? '（' + dlBytes + '）' : '' }}
+      </p>
+    </template>
+    <template v-else-if="dlState === 'ready' && dlPct === 100">
+      <div class="dl-bar"><div class="dl-bar-in" style="width:100%"></div></div>
+      <p style="text-align:center; font-size:13px; color:var(--muted); margin:8px 16px 4px;">
+        {{ dlBytes }}{{ ipaFile ? ' · 已弹出分享面板' : '' }}
+      </p>
+    </template>
     <button class="btn" :disabled="dlState === 'downloading'" @click="doDownloadAndShare">
-      {{ dlState === 'downloading' ? '正在下载…' : (dlState === 'ready' ? '再次弹出安装面板' : '点此安装') }}
+      {{ dlState === 'downloading' ? '下载中 ' + dlPct + '%' : (dlState === 'ready' ? '再次弹出安装面板' : '点此安装') }}
     </button>
     <p style="font-size:12px; color:var(--muted); margin:4px 16px 8px; line-height:1.6;">
       安装包下载完成后会弹出系统分享面板，选择 TrollStore 确认安装即可（同变体会覆盖旧版并保留数据）。
