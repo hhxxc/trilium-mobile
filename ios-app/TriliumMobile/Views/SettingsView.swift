@@ -3,9 +3,10 @@ import SwiftUI
 /// 设置页：连接信息 / 退出登录 / 应用内更新（检查更新 → 下载 IPA → 系统分享面板选 TrollStore）
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
-    @StateObject private var update = UpdateStore.shared
+    @ObservedObject private var update = UpdateStore.shared
 
     @State private var serverVersion = ""
+    @State private var pendingShareVersion: String? = nil
 
     var body: some View {
         NavigationView {
@@ -64,6 +65,13 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("设置")
+            .onChange(of: update.downloadState) { state in
+                // 用户点了安装、下载完成 → 自动弹分享面板
+                if let ver = pendingShareVersion, case .downloaded(let f) = state {
+                    pendingShareVersion = nil
+                    presentShare(fileURL: f, version: ver)
+                }
+            }
             .task {
                 await update.autoCheckIfNeeded()
                 if let info = try? await ETAPIClient.shared.appInfo() {
@@ -133,19 +141,9 @@ struct SettingsView: View {
             presentShare(fileURL: fileURL, version: latest)
             return
         }
+        // 标记「用户点了安装」，下载完成后由 onChange 自动弹分享面板
+        pendingShareVersion = latest
         update.startDownload(latest: latest, ipaURL: url)
-
-        // 观察下载完成，自动弹分享面板
-        Task { [weak update] in
-            for _ in 0..<600 { // 最多等 60s
-                try? await Task.sleep(nanoseconds: 100_000_000)
-                if let u = update, case .downloaded(let f) = u.downloadState {
-                    presentShare(fileURL: f, version: latest)
-                    return
-                }
-                if let u = update, case .failed = u.downloadState { return }
-            }
-        }
     }
 
     private func presentShare(fileURL: URL, version: String) {
