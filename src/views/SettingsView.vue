@@ -86,8 +86,8 @@ async function doCheckUpdate(silent = false) {
   try {
     upd.value = await checkUpdate();
     updDetail.value =
-      `通道 ${upd.via}｜HTTP 200｜content-type ${upd.contentType || '(无)'}｜${upd.bytes} 字节\n` +
-      `本地 v${upd.current} → 云端 v${upd.latest}`;
+      `通道 ${upd.value.via}｜HTTP 200｜content-type ${upd.value.contentType || '(无)'}｜${upd.value.bytes} 字节\n` +
+      `本地 v${upd.value.current} → 云端 v${upd.value.latest}`;
     if (upd.value.hasUpdate) {
       updMsg.value = `发现新版本 v${upd.value.latest}`;
     } else {
