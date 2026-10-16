@@ -71,17 +71,17 @@ async function doDiagnose() {
   }
 }
 
-// ---------- 应用内更新 ----------
+// ---------- 应用内更新（交互照抄巢记 NestKeep） ----------
 const upd = ref(null);        // checkUpdate() 的结果
 const updMsg = ref('');       // 检查/更新过程提示
 const updChecking = ref(false);
 const updDetail = ref('');    // 诊断细节（通道/HTTP/content-type/字节数）
 const showDetail = ref(false);
-const installing = ref('');   // 正在尝试的安装器名字
+const showSteps = ref(false); // 复制直链后显示安装步骤
 
 async function doCheckUpdate(silent = false) {
   if (!silent) updChecking.value = true;
-  updMsg.value = silent ? '' : '检查中…';
+  updMsg.value = silent ? '' : '正在检查更新…';
   updDetail.value = '';
   try {
     upd.value = await checkUpdate();
@@ -89,27 +89,40 @@ async function doCheckUpdate(silent = false) {
       `通道 ${upd.value.via}｜HTTP 200｜content-type ${upd.value.contentType || '(无)'}｜${upd.value.bytes} 字节\n` +
       `本地 v${upd.value.current} → 云端 v${upd.value.latest}`;
     if (upd.value.hasUpdate) {
-      updMsg.value = `发现新版本 v${upd.value.latest}`;
+      updMsg.value = '';   // 有新版时正文交给卡片展示
     } else {
-      updMsg.value = silent ? '' : `已是最新版本（v${upd.value.latest}）`;
+      updMsg.value = silent ? '' : '已是最新版本';
     }
   } catch (e) {
     upd.value = null;
-    if (!silent) updMsg.value = '检查失败：' + (e.message || '网络不可达');
+    if (!silent) updMsg.value = '无法获取版本信息：' + (e.message || '网络不可达');
   } finally {
     updChecking.value = false;
   }
 }
 
-/** 拉起安装器（巢记模式：一个按钮，直接打开放大镜/TrollStore 下载安装，覆盖装数据保留） */
-function doUpdate(schemeKey = 'apple-magnifier', label = 'TrollStore') {
+/** 直接唤起 TrollStore（apple-magnifier）。若跳到「放大器」说明未接管 scheme，用复制直链兜底 */
+function doUpdate() {
   if (!upd.value) return;
-  installing.value = label;
   try {
-    startTrollStoreUpdate(upd.value.ipaUrl, schemeKey);
-    updMsg.value = `已打开放大镜（${label}），它会下载并覆盖安装，数据保留。`;
+    startTrollStoreUpdate(upd.value.ipaUrl, 'apple-magnifier');
+    updMsg.value = '已唤起 TrollStore。若跳到了「放大器」，说明 TrollStore 没接管放大器，用下面的复制直链粘贴安装即可。';
   } catch (e) {
     updMsg.value = '拉起失败：' + (e.message || e);
+  }
+}
+
+/** 复制 IPA 直链（巢记模式兜底：到 TrollStore 里「从 URL 安装」粘贴） */
+function doCopyLink() {
+  if (!upd.value) return;
+  const link = upd.value.ipaUrl;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(link)
+      .then(() => { showSteps.value = true; updMsg.value = '安装链接已复制。'; })
+      .catch(() => { showSteps.value = true; updMsg.value = '复制失败，直链：' + link; });
+  } else {
+    showSteps.value = true;
+    updMsg.value = '直链：' + link;
   }
 }
 
@@ -165,12 +178,29 @@ onMounted(() => { doCheckUpdate(true); });
     <div class="title">更新</div>
     <div class="meta">当前版本 v{{ APP_VERSION }}<template v-if="upd && upd.hasUpdate"> · 发现新版本 v{{ upd.latest }}</template></div>
   </div>
-  <p v-if="updMsg" style="font-size:13px; color:var(--muted); margin:8px 16px;">{{ updMsg }}</p>
-  <button class="btn secondary" :disabled="updChecking" @click="doCheckUpdate(false)">{{ updChecking ? '检查中…' : '检查更新' }}</button>
 
   <template v-if="upd && upd.hasUpdate">
-    <button class="btn" @click="doUpdate('apple-magnifier', 'TrollStore')">更新到 v{{ upd.latest }}</button>
+    <button class="btn" @click="doUpdate">直接唤起 TrollStore 安装 v{{ upd.latest }}</button>
+    <button class="btn secondary" @click="doCopyLink">复制直链</button>
+    <p style="font-size:12px; color:var(--muted); margin:4px 16px 8px; line-height:1.6;">
+      同变体会覆盖旧版并保留数据。点「直接唤起」后如果跳到了「放大器」，说明这台设备上
+      TrollStore 没接管放大器，用「复制直链」到 TrollStore 里从 URL 安装即可。
+    </p>
+    <template v-if="showSteps">
+      <div class="card" style="margin:8px 16px;">
+        <div class="title" style="font-size:14px;">安装步骤</div>
+        <div class="meta" style="line-height:1.8;">
+          1. 打开 TrollStore<br />
+          2. 点右上角「+」<br />
+          3. 选「从 URL 安装」，粘贴链接<br />
+          4. 确认安装（同变体才会覆盖旧版）
+        </div>
+      </div>
+    </template>
   </template>
+
+  <p v-if="updMsg" style="font-size:13px; color:var(--muted); margin:8px 16px;">{{ updMsg }}</p>
+  <button class="btn secondary" :disabled="updChecking" @click="doCheckUpdate(false)">{{ updChecking ? '正在检查更新…' : '检查更新' }}</button>
 
   <button class="btn secondary" style="margin-top:8px;" @click="showDetail = !showDetail">
     {{ showDetail ? '收起诊断信息' : '显示诊断信息' }}
