@@ -77,6 +77,15 @@ jobs:
           $PB -c "Delete :CADisableMinimumFrameDurationOnPhone" "$PLIST" >/dev/null 2>&1 || true
           $PB -c "Add :CADisableMinimumFrameDurationOnPhone bool true" "$PLIST"
 
+          # 版本号注入：否则 TrollStore 里永远显示模板写死的 1.0
+          VERSION="${{ steps.version.outputs.version }}"
+          $PB -c "Set :CFBundleShortVersionString $VERSION" "$PLIST" 2>/dev/null \
+            || $PB -c "Add :CFBundleShortVersionString string $VERSION" "$PLIST"
+          $PB -c "Set :CFBundleVersion ${{ github.run_number }}" "$PLIST" 2>/dev/null \
+            || $PB -c "Add :CFBundleVersion string ${{ github.run_number }}" "$PLIST"
+
+          $PB -c "Print :CFBundleShortVersionString" "$PLIST"
+          $PB -c "Print :CFBundleVersion" "$PLIST"
           $PB -c "Print :NSAppTransportSecurity" "$PLIST"
 
       - name: Generate iOS App Icons

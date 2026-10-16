@@ -1,11 +1,12 @@
 <script setup>
 // 设置：服务器地址 + 密码登录（换 ETAPI token）+ 应用内更新
-import { ref, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { loadSettings, saveSettings, login, logout, appInfo, resetAuthExpiredFlag, diagnose } from '../api.js';
 
 const props = defineProps({ notice: { type: String, default: '' } });
 const emit = defineEmits(['notice-consumed']);
 import { APP_VERSION, checkUpdate, startTrollStoreUpdate, probeManifest, downloadIpa } from '../update.js';
+import { pre, preBytes, setPreResult } from '../preload.js';
 
 const settings = loadSettings();
 const server = ref(settings.server);
@@ -83,6 +84,10 @@ const dlPct = ref(0);         // 下载进度 0-100
 const dlBytes = ref('');      // 已下载/总大小（人类可读）
 let ipaFile = null;           // 已下载的 IPA File 对象（内存 ~600KB，可接受）
 
+// 预下载（preload.js）与当前可更新版本匹配时，安装包已在内存
+const preReady = computed(() => pre.state === 'ready' && upd.value && pre.version === upd.value.latest && !!preBytes());
+const preActive = computed(() => pre.state === 'downloading' && upd.value && pre.version === upd.value.latest);
+
 function fmtKB(n) {
   return n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB';
 }
@@ -111,10 +116,19 @@ async function doCheckUpdate(silent = false) {
   }
 }
 
-/** 分段下载 IPA（带进度条），完成后弹系统分享面板 */
+/** 分段下载 IPA（带进度条），完成后弹系统分享面板。
+ *  优先使用启动时静默预下载好的包（preReady），没有才现场下载。 */
 async function doDownloadAndShare() {
   if (!upd.value) return;
-  if (dlState.value === 'ready' && ipaFile) { await shareIpaFile(); return; }
+  if (preReady.value) {
+    dlState.value = 'ready';
+    dlPct.value = 100;
+    dlBytes.value = fmtKB(preBytes().length) + ' 已提前下载';
+    ipaFile = new File([preBytes()], `Trilium-${upd.value.latest}.ipa`, { type: 'application/octet-stream' });
+    await shareIpaFile();
+    return;
+  }
+  if (preActive.value) return; // 后台正在下，按钮已禁用
   dlState.value = 'downloading';
   dlPct.value = 0;
   dlBytes.value = '';
@@ -125,6 +139,7 @@ async function doDownloadAndShare() {
       dlBytes.value = `${fmtKB(got)} / ${fmtKB(total)}`;
     });
     ipaFile = new File([bytes], `Trilium-${upd.value.latest}.ipa`, { type: 'application/octet-stream' });
+    setPreResult(bytes, upd.value.latest); // 共享给预下载状态，下次直接用
     dlState.value = 'ready';
     dlPct.value = 100;
     dlBytes.value = fmtKB(bytes.length) + ' 下载完成';
@@ -244,10 +259,10 @@ onMounted(() => { doCheckUpdate(true); });
       <div class="upd-title">发现新版本 v{{ upd.latest }}</div>
       <div class="upd-sub">当前版本 v{{ upd.current }}</div>
     </div>
-    <template v-if="dlState === 'downloading'">
-      <div class="dl-bar"><div class="dl-bar-in" :style="{ width: dlPct + '%' }"></div></div>
+    <template v-if="dlState === 'downloading' || preActive">
+      <div class="dl-bar"><div class="dl-bar-in" :style="{ width: (preActive ? pre.pct : dlPct) + '%' }"></div></div>
       <p style="text-align:center; font-size:13px; color:var(--muted); margin:8px 16px 4px;">
-        正在下载 {{ dlPct }}%{{ dlBytes ? '（' + dlBytes + '）' : '' }}
+        {{ preActive ? `后台下载中 ${pre.pct}%` : `正在下载 ${dlPct}%${dlBytes ? '（' + dlBytes + '）' : ''}` }}
       </p>
     </template>
     <template v-else-if="dlState === 'ready' && dlPct === 100">
@@ -256,11 +271,13 @@ onMounted(() => { doCheckUpdate(true); });
         {{ dlBytes }}{{ ipaFile ? ' · 已弹出分享面板' : '' }}
       </p>
     </template>
-    <button class="btn" :disabled="dlState === 'downloading'" @click="doDownloadAndShare">
-      {{ dlState === 'downloading' ? '下载中 ' + dlPct + '%' : (dlState === 'ready' ? '再次弹出安装面板' : '点此安装') }}
+    <button class="btn" :disabled="dlState === 'downloading' || preActive" @click="doDownloadAndShare">
+      {{ preActive ? '后台下载中 ' + pre.pct + '%'
+        : (dlState === 'downloading' ? '下载中 ' + dlPct + '%'
+        : (preReady ? '点此安装（已提前下载）' : (dlState === 'ready' ? '再次弹出安装面板' : '点此安装'))) }}
     </button>
     <p style="font-size:12px; color:var(--muted); margin:4px 16px 8px; line-height:1.6;">
-      安装包下载完成后会弹出系统分享面板，选择 TrollStore 确认安装即可（同变体会覆盖旧版并保留数据）。
+      {{ preReady ? '安装包已在启动时提前下载完成，直接弹出分享面板选 TrollStore 即可。' : '安装包下载完成后会弹出系统分享面板，选择 TrollStore 确认安装即可（同变体会覆盖旧版并保留数据）。' }}
     </p>
     <a class="release-link" style="margin-bottom:8px;" @click.prevent="doDownloadAndShare()">重新下载</a>
     <button class="btn secondary" @click="openRelease">打开发布页</button>

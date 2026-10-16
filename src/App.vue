@@ -43,6 +43,9 @@ function onAuthExpired() {
 
 onMounted(() => {
   window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
+  // 静默预下载（抄巢记）：启动 3 秒后自动检查更新，有新版就在后台分段下载，
+  // 避开首屏网络竞争；用户进设置页时安装包已就绪
+  setTimeout(() => { import('./preload.js').then((m) => m.preloadUpdate()); }, 3000);
 });
 onUnmounted(() => {
   window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
