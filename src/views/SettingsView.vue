@@ -5,7 +5,7 @@ import { loadSettings, saveSettings, login, logout, appInfo, resetAuthExpiredFla
 
 const props = defineProps({ notice: { type: String, default: '' } });
 const emit = defineEmits(['notice-consumed']);
-import { APP_VERSION, checkUpdate, startTrollStoreUpdate, probeManifest, downloadIpa } from '../update.js';
+import { APP_VERSION, checkUpdate, probeManifest, downloadIpa } from '../update.js';
 import { pre, preBytes, setPreResult } from '../preload.js';
 
 const settings = loadSettings();
@@ -146,7 +146,7 @@ async function doDownloadAndShare() {
     await shareIpaFile();
   } catch (e) {
     dlState.value = 'error';
-    dlMsg.value = '下载失败：' + (e.message || e) + '（点「点此安装」可重试）';
+    updMsg.value = '下载失败：' + (e.message || e) + '（点「点此安装」可重试）';
   }
 }
 
@@ -156,22 +156,11 @@ async function shareIpaFile() {
     if (navigator.canShare && navigator.canShare({ files: [ipaFile] })) {
       await navigator.share({ files: [ipaFile], title: `Trilium v${upd.value.latest}` });
     } else {
-      dlMsg.value = '此系统不支持直接分享文件，用下面的「复制直链」安装即可。';
+      updMsg.value = '此系统不支持直接分享文件，用「复制直链」到 TrollStore 里安装。';
       showSteps.value = true;
     }
   } catch (e) {
-    if (e && e.name !== 'AbortError') dlMsg.value = '分享失败：' + (e.message || e);
-  }
-}
-
-/** 直接唤起 TrollStore（apple-magnifier）——分享面板不可用时的备用 */
-function doMagnifier() {
-  if (!upd.value) return;
-  try {
-    startTrollStoreUpdate(upd.value.ipaUrl, 'apple-magnifier');
-    updMsg.value = '已唤起 TrollStore。若跳到了「放大器」没反应，用「复制直链」粘贴安装即可。';
-  } catch (e) {
-    updMsg.value = '拉起失败：' + (e.message || e);
+    if (e && e.name !== 'AbortError') updMsg.value = '分享失败：' + (e.message || e);
   }
 }
 
@@ -220,6 +209,7 @@ onMounted(() => { doCheckUpdate(true); });
 <template>
   <div class="topbar large">设置</div>
   <template v-if="!loggedIn">
+    <div class="section-h">连接</div>
     <div class="field">
       <label>服务器地址（默认 ddnsto 公网，家内外通用；在家可改内网 http://192.168.31.198:18190 更快）</label>
       <input v-model="server" placeholder="https://dsm920-ddsnto-trilium-notes.x.ddnsto.com" />
@@ -231,19 +221,22 @@ onMounted(() => { doCheckUpdate(true); });
     <button class="btn" @click="doLogin">登录</button>
   </template>
   <template v-else>
-    <div class="card">
-      <div class="title">已连接</div>
+    <div class="section-h">连接</div>
+    <div class="card" style="margin-top:8px;">
+      <div class="title">已连接 ✓</div>
       <div class="meta">{{ server }}</div>
     </div>
     <button class="btn secondary" @click="doLogout">退出登录</button>
   </template>
-  <p v-if="status" style="font-size:13px; color:var(--muted); margin:8px 16px;">{{ status }}</p>
+  <p v-if="status" class="hint">{{ status }}</p>
+  <div class="section-h">诊断</div>
   <button class="btn secondary" :disabled="diagBusy" @click="doDiagnose">{{ diagBusy ? '检测中…' : '连接自检' }}</button>
-  <pre v-if="diagOut" style="font-size:12px; color:var(--muted); margin:8px 16px; white-space:pre-wrap; line-height:1.6; font-family:inherit;">{{ diagOut }}</pre>
+  <pre v-if="diagOut" class="hint mono" style="margin-top:4px;">{{ diagOut }}</pre>
 
-  <div class="card" style="margin-top:20px;">
-    <div class="title">更新</div>
-    <div class="meta">当前版本 v{{ APP_VERSION }}<template v-if="upd && upd.hasUpdate"> · 发现新版本 v{{ upd.latest }}</template></div>
+  <div class="section-h">更新</div>
+  <div class="card" style="margin-top:8px;">
+    <div class="title">当前版本 v{{ APP_VERSION }}</div>
+    <div class="meta"><template v-if="upd && upd.hasUpdate">发现新版本 v{{ upd.latest }}</template><template v-else>已是最新</template></div>
   </div>
 
   <template v-if="upd && upd.hasUpdate">
@@ -276,19 +269,18 @@ onMounted(() => { doCheckUpdate(true); });
         : (dlState === 'downloading' ? '下载中 ' + dlPct + '%'
         : (preReady ? '点此安装（已提前下载）' : (dlState === 'ready' ? '再次弹出安装面板' : '点此安装'))) }}
     </button>
-    <p style="font-size:12px; color:var(--muted); margin:4px 16px 8px; line-height:1.6;">
+    <p class="hint" style="font-size:12px; margin-top:4px;">
       {{ preReady ? '安装包已在启动时提前下载完成，直接弹出分享面板选 TrollStore 即可。' : '安装包下载完成后会弹出系统分享面板，选择 TrollStore 确认安装即可（同变体会覆盖旧版并保留数据）。' }}
     </p>
     <a class="release-link" style="margin-bottom:8px;" @click.prevent="doDownloadAndShare()">重新下载</a>
     <button class="btn secondary" @click="openRelease">打开发布页</button>
     <details style="margin:10px 16px;">
-      <summary style="font-size:12px; color:var(--muted);">其他安装方式（分享面板没弹出时用）</summary>
-      <button class="btn secondary" style="margin-top:8px;" @click="doMagnifier">直接唤起 TrollStore</button>
-      <button class="btn secondary" @click="doCopyLink">复制直链</button>
+      <summary style="font-size:13px; color:var(--tint);">其他安装方式（分享面板没弹出时用）</summary>
+      <button class="btn secondary" style="margin-top:8px;" @click="doCopyLink">复制直链</button>
       <template v-if="showSteps">
         <div class="card" style="margin:8px 0 0;">
           <div class="title" style="font-size:14px;">安装步骤</div>
-          <div class="meta" style="line-height:1.8;">
+          <div class="meta" style="line-height:1.9; display:block;">
             1. 打开 TrollStore<br />
             2. 点右上角「+」<br />
             3. 选「从 URL 安装」，粘贴链接<br />
@@ -299,14 +291,14 @@ onMounted(() => { doCheckUpdate(true); });
     </details>
   </template>
 
-  <p v-if="updMsg" style="font-size:13px; color:var(--muted); margin:8px 16px;">{{ updMsg }}</p>
+  <p v-if="updMsg" class="hint">{{ updMsg }}</p>
   <button class="btn secondary" :disabled="updChecking" @click="doCheckUpdate(false)">{{ updChecking ? '正在检查更新…' : '检查更新' }}</button>
 
-  <button class="btn secondary" style="margin-top:8px;" @click="showDetail = !showDetail">
+  <button class="btn ghost" style="margin-top:6px;" @click="showDetail = !showDetail">
     {{ showDetail ? '收起诊断信息' : '显示诊断信息' }}
   </button>
   <template v-if="showDetail">
-    <pre style="font-size:12px; color:var(--muted); margin:8px 16px; white-space:pre-wrap; line-height:1.6; font-family:inherit;">{{ updDetail || '（先点一次「检查更新」）' }}</pre>
+    <pre class="hint mono">{{ updDetail || '（先点一次「检查更新」）' }}</pre>
     <button class="btn secondary" @click="copyDetail">复制诊断信息</button>
   </template>
 </template>

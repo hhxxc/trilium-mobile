@@ -1,6 +1,6 @@
 <script setup>
 // 布局方案 D 首页：最近笔记卡片流 + 底部速记条（速记落「收件箱」）
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { recentNotes, ensureInbox, createNote, readCache, writeCache, cacheUpsert, loadSettings } from '../api.js';
 
 const emit = defineEmits(['open']);
@@ -47,9 +47,20 @@ function snippet(content) {
   return text.slice(0, 80);
 }
 
+// 相对时间：今天 / 昨天 / MM-DD / YYYY-MM-DD
 function fmtDate(iso) {
   if (!iso) return '';
-  return iso.replace('T', ' ').slice(0, 16);
+  const d = new Date(iso);
+  if (isNaN(d)) return iso.replace('T', ' ').slice(0, 16);
+  const now = new Date();
+  const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const pad = (n) => String(n).padStart(2, '0');
+  const hm = pad(d.getHours()) + ':' + pad(d.getMinutes());
+  if (sameDay(d, now)) return '今天 ' + hm;
+  const yest = new Date(now); yest.setDate(now.getDate() - 1);
+  if (sameDay(d, yest)) return '昨天 ' + hm;
+  const md = pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  return d.getFullYear() === now.getFullYear() ? md : d.getFullYear() + '-' + md;
 }
 
 async function refresh() {
@@ -96,11 +107,53 @@ async function quickSave() {
   }
 }
 
+// ---------- 首页 hero：时段问候 + 日期 + 统计 ----------
+const greeting = computed(() => {
+  const h = new Date().getHours();
+  return h < 5 ? '夜深了' : h < 11 ? '早上好' : h < 14 ? '中午好' : h < 18 ? '下午好' : '晚上好';
+});
+const todayLine = computed(() => {
+  const d = new Date();
+  const wd = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+  return `${d.getMonth() + 1} 月 ${d.getDate()} 日 星期${wd}`;
+});
+const statToday = computed(() => countWithin(1));
+const statWeek = computed(() => countWithin(7));
+function countWithin(days) {
+  const t = Date.now() - days * 864e5;
+  return notes.value.filter((n) => n.dateModified && new Date(n.dateModified).getTime() >= t).length;
+}
+
+// ---------- 按日期分组：今天 / 昨天 / 本周 / 更早 ----------
+const groups = computed(() => {
+  const now = new Date();
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const buckets = [
+    { key: '今天', from: dayStart, items: [] },
+    { key: '昨天', from: dayStart - 864e5, items: [] },
+    { key: '本周', from: dayStart - 6 * 864e5, items: [] },
+    { key: '更早', from: -Infinity, items: [] },
+  ];
+  for (const n of notes.value) {
+    const t = n.dateModified ? new Date(n.dateModified).getTime() : 0;
+    (buckets.find((b) => t >= b.from) || buckets[3]).items.push(n);
+  }
+  return buckets.filter((b) => b.items.length);
+});
+
 onMounted(() => { if (loadSettings().token) refresh(); });
 </script>
 
 <template>
-  <div class="topbar large">最近</div>
+  <div class="hero">
+    <div class="hi">{{ greeting }}<span class="hi-dot">.</span></div>
+    <div class="date">{{ todayLine }}</div>
+    <div class="stats">
+      <div class="stat"><b>{{ statToday }}</b><span>今天</span></div>
+      <div class="stat"><b>{{ statWeek }}</b><span>最近 7 天</span></div>
+      <div class="stat"><b>{{ notes.length }}</b><span>最近笔记</span></div>
+    </div>
+  </div>
   <div class="quickbar">
     <input v-model="draft" placeholder="记一笔…" @keyup.enter="onEnter" />
     <button :disabled="saving" @click="quickSave">↑</button>
@@ -110,14 +163,35 @@ onMounted(() => { if (loadSettings().token) refresh(); });
       <path d="M12 3a9 9 0 1 1-8.5 6" />
     </svg>
   </div>
-  <p v-if="error" style="color:var(--red); font-size:13px; margin:8px 16px; line-height:1.5;">{{ error }}</p>
+  <p v-if="error" class="hint error">{{ error }}</p>
   <button v-if="error" class="btn secondary" style="margin-top:4px;" @click="emit('settings')">去设置页重新登录 / 检查地址</button>
-  <p v-if="loading" class="empty">加载中…</p>
-  <div v-for="n in notes" :key="n.noteId" class="card" @click="emit('open', n.noteId)">
-    <div class="title">{{ n.title }}</div>
-    <div v-if="snippet(n._content || n.content)" class="snippet">{{ snippet(n._content || n.content) }}</div>
-    <div class="meta">{{ fmtDate(n.dateModified) }}{{ n._local ? ' · 本地' : '' }}</div>
-  </div>
+  <template v-if="loading">
+    <div v-for="i in 5" :key="'sk' + i" class="list skel" style="padding:14px 16px;">
+      <div class="bar t"></div>
+      <div class="bar s"></div>
+    </div>
+  </template>
+  <template v-for="g in groups" :key="g.key">
+    <div class="group-h">{{ g.key }}</div>
+    <div class="list">
+      <div
+        v-for="n in g.items" :key="n.noteId"
+        class="row" @click="emit('open', n.noteId)"
+      >
+        <div class="row-main">
+          <div class="row-title">
+            {{ n.title }}
+            <span v-if="n._local" class="chip">本地</span>
+          </div>
+          <div v-if="snippet(n._content || n.content)" class="row-snippet">{{ snippet(n._content || n.content) }}</div>
+        </div>
+        <div class="row-side">
+          <span class="row-time">{{ fmtDate(n.dateModified) }}</span>
+          <span class="chev">›</span>
+        </div>
+      </div>
+    </div>
+  </template>
   <div v-if="!loading && !notes.length" class="empty">
     <div class="empty-ic">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.25"/><path d="M12 7.75V12l2.75 1.75"/></svg>

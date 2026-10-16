@@ -51,8 +51,12 @@ loadChildren('root');
       <span class="crumb" :class="{ active: i === crumbs.length - 1 }" @click="enter(c)">{{ c.title }}</span>
     </template>
   </div>
-  <p v-if="error" style="color:var(--red); font-size:13px; margin:8px 16px;">{{ error }}</p>
-  <p v-if="loading" class="empty">加载中…</p>
+  <p v-if="error" class="hint error">{{ error }}</p>
+  <template v-if="loading">
+    <div v-for="i in 6" :key="'sk' + i" class="card skel" style="padding:13px 16px;">
+      <div class="bar t"></div>
+    </div>
+  </template>
   <div
     v-for="n in children" :key="n.noteId"
     class="tree-row" :class="{ folder: isFolder(n) }"
@@ -60,7 +64,7 @@ loadChildren('root');
   >
     <span class="tree-ic" :class="{ leaf: !isFolder(n) }">
       <svg v-if="isFolder(n)" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-      <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#8E8E93" stroke-width="2.2" stroke-linecap="round"><path d="M5 5h14M5 10h14M5 15h9"/></svg>
+      <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 5h14M5 10h14M5 15h9"/></svg>
     </span>
     <span class="name">{{ n.title }}</span>
     <span v-if="isFolder(n)" class="tree-count">{{ (n.childNoteIds || []).length }}</span>

@@ -1,7 +1,8 @@
-// 应用内检查更新：读 NAS 清单 → 有新版就交给 TrollStore / AltStore 安装
+// 应用内检查更新：读 NAS 清单 → 下载 IPA → 系统分享面板（选 TrollStore 安装）。
 //
-// 原理：装一个 URL scheme 协议（TrollStore 是 apple-magnifier://，AltStore 是 altstore://），
-// 跳过去它会自己下载安装（覆盖安装、数据保留）。App 只负责"发现新版本 + 发起跳转"。
+// ⚠️ 不要走 URL scheme 拉起安装器（apple-magnifier:// 等，2026-10-17 删）：
+//    用户实测 TrollStore 没接管该 scheme 时会落到 iOS 系统「放大镜」App，且永远如此。
+//    唯一安装路径 = 下载 IPA → navigator.share 分享面板 → 用户选 TrollStore。
 //
 // 清单放在 NAS（https://ezbookx.x.ddnsto.com/api/nestkeep/latest-trilium.json），
 // 与巢记共用同一条无鉴权下载路由（放行 *.ipa 与 latest*.json）。
@@ -31,13 +32,6 @@ const IPA_URL_FALLBACK = 'https://ezbookx.x.ddnsto.com/api/nestkeep/trilium-mobi
 
 /** 当前版本：CI 构建前会把 package.json 的 version 改成 1.0.xx.xx，打包时一起进来 */
 export const APP_VERSION = pkg.version || '0.0.0';
-
-/** 支持的安装器协议，按顺序尝试；也可以由清单里的 `schemes` 字段覆盖 */
-const DEFAULT_SCHEMES = [
-  { key: 'apple-magnifier', name: 'TrollStore', url: (ipa) => 'apple-magnifier://install?url=' + encodeURIComponent(ipa) },
-  { key: 'altstore', name: 'AltStore', url: (ipa) => 'altstore://install?url=' + encodeURIComponent(ipa) },
-  { key: 'sidestore', name: 'SideStore', url: (ipa) => 'sidestore://install?url=' + encodeURIComponent(ipa) },
-];
 
 function parseVersion(v) {
   return String(v || '').replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);
@@ -243,28 +237,6 @@ export async function downloadIpa(url, onProgress) {
   if (all[0] !== 0x50 || all[1] !== 0x4b) throw new Error('下载内容不是有效的安装包（开头不是 PK）');
   if (off !== total) throw new Error(`分段下载不完整（${off}/${total} 字节）`);
   return all;
-}
-
-/** 该安装器协议是否可用（跳转前先探一下，不可用就别乱跳） */
-export function installerUrl(schemeKey, ipaUrl) {
-  const s = DEFAULT_SCHEMES.find((x) => x.key === schemeKey);
-  return s ? s.url(ipaUrl) : '';
-}
-
-/**
- * 拉起安装器。TrollStore 的 URL scheme（apple-magnifier）在它的 Info.plist 里注册；
- * 若跳转后没人接管，点击会静默失败 —— 所以这里把「怎么跳、跳哪个」的文本也返回，
- * 让界面能把兜底信息显示给用户。
- */
-export function startTrollStoreUpdate(ipaUrl, schemeKey = 'apple-magnifier') {
-  const url = installerUrl(schemeKey, ipaUrl);
-  if (!url) throw new Error('未知的安装器协议：' + schemeKey);
-  const a = document.createElement('a');
-  a.href = url;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  return url;
 }
 
 /** 取消安卓/iOS 没装安装器时的兜底：直接下载 IPA（Safari 会存到"文件"） */

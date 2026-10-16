@@ -29,10 +29,23 @@ async function doSearch() {
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8L20 20"/></svg>
     </button>
   </div>
-  <p v-if="loading" class="empty">搜索中…</p>
-  <div v-for="n in results" :key="n.noteId" class="card" @click="emit('open', n.noteId)">
-    <div class="title">{{ n.title }}</div>
-  </div>
+  <template v-if="loading">
+    <div v-for="i in 4" :key="'sk' + i" class="list skel" style="padding:14px 16px;">
+      <div class="bar t"></div>
+      <div class="bar s"></div>
+    </div>
+  </template>
+  <template v-else-if="results.length">
+    <div class="group-h">结果 {{ results.length }}</div>
+    <div class="list">
+      <div v-for="n in results" :key="n.noteId" class="row" @click="emit('open', n.noteId)">
+        <div class="row-main">
+          <div class="row-title">{{ n.title }}</div>
+        </div>
+        <div class="row-side"><span class="chev">›</span></div>
+      </div>
+    </div>
+  </template>
   <div v-if="!loading && searched && !results.length" class="empty">
     <div class="empty-ic">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8L20 20"/></svg>

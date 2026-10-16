@@ -52,7 +52,14 @@ async function save() {
     <span class="nav-status">{{ status }}</span>
     <span class="nav-btn" :class="{ disabled: saving }" @click="save">{{ saving ? '…' : '保存' }}</span>
   </div>
-  <p v-if="loading" class="empty">加载中…</p>
+  <template v-if="loading">
+    <div class="card skel" style="margin-top:14px;">
+      <div class="bar t"></div>
+      <div class="bar s"></div>
+      <div class="bar s"></div>
+      <div class="bar m"></div>
+    </div>
+  </template>
   <template v-else>
     <div class="field" style="margin-top:14px;">
       <label>标题</label>
