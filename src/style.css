@@ -24,7 +24,7 @@ body { font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif; 
 /* ⚠️ 用 100% 而非 100vh：iOS WKWebView 里 100vh 可能比可视区高，会把底部标签栏顶出屏幕 */
 #app { height: 100%; display: flex; flex-direction: column; }
 
-/* ---------- 导航栏（毛玻璃 + 吸顶） ---------- */
+/* ---------- 导航栏 ---------- */
 .topbar {
   position: sticky; top: 0; z-index: 10;
   min-height: calc(var(--safe-top) + 44px);
@@ -39,12 +39,16 @@ body { font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif; 
 }
 .topbar-left { justify-content: flex-start; font-weight: 400; font-size: 17px; }
 
-/* iOS 大标题风格（首页/搜索/设置）：左对齐 34pt 粗体 */
+/* 微信式主页面导航（最近/笔记树/搜索/设置）：
+   实色浅灰通栏（#EDEDED）+ 左对齐 20pt 粗标题 + 44pt 栏高 + 底部细线，与大标题折叠式区分 */
 .topbar.large {
   justify-content: flex-start;
-  min-height: calc(var(--safe-top) + 52px);
-  padding-bottom: 2px;
-  font-size: 30px; font-weight: 700; letter-spacing: 0.2px;
+  min-height: calc(var(--safe-top) + 44px);
+  background: #EDEDED;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  padding-bottom: 0;
+  font-size: 20px; font-weight: 700; letter-spacing: 0.2px;
 }
 
 /* 编辑器顶栏三段式 */
@@ -60,24 +64,22 @@ body { font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif; 
 .crumb.active { color: var(--text); font-weight: 600; }
 .crumb-sep { color: var(--muted); margin: 0 6px; }
 
-/* ---------- 标签栏（毛玻璃） ---------- */
+/* ---------- 标签栏（微信式：实色浅灰 + 图标 27pt + 文字 10pt + 顶部细线） ---------- */
 .tabbar {
   flex-shrink: 0;
-  display: flex; background: var(--bar-bg);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  backdrop-filter: saturate(180%) blur(20px);
+  display: flex; background: #F7F7F7;
   border-top: 0.5px solid var(--separator);
   padding-bottom: var(--safe-bottom);
   user-select: none; -webkit-user-select: none;
 }
 .tabbar button {
-  flex: 1; border: 0; background: transparent; padding: 5px 0 3px; font-size: 10px;
-  color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 1px;
+  flex: 1; border: 0; background: transparent; padding: 6px 0 3px; font-size: 10px;
+  color: #8A8A8E; display: flex; flex-direction: column; align-items: center; gap: 1px;
 }
 .tabbar button.active { color: var(--tint); }
 .tabbar button:active { opacity: 0.55; }
-.tabbar .ico { height: 25px; display: flex; align-items: center; }
-.tabbar .ico svg { width: 25px; height: 25px; display: block; }
+.tabbar .ico { height: 27px; display: flex; align-items: center; }
+.tabbar .ico svg { width: 27px; height: 27px; display: block; }
 
 /* ---------- 内容区 ---------- */
 .page { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
