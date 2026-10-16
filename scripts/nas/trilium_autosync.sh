@@ -135,7 +135,8 @@ chmod 644 "$DATA_DIR/$IPA_NAME" 2>/dev/null
 cp -f "$DATA_DIR/$IPA_NAME" "$DATA_DIR/trilium-mobile-${REMOTE_TAG}.ipa" 2>/dev/null
 
 TMP_MAN="$DATA_DIR/.${MANIFEST}.tmp"
-printf '{"version": "%s", "ipaUrl": "%s/%s"}\n' "$REMOTE_VER" "$PUBLIC_BASE" "$IPA_NAME" > "$TMP_MAN"
+printf '{"version": "%s", "ipaUrl": "%s/%s", "releaseUrl": "https://github.com/%s/releases/tag/v%s"}\n' \
+    "$REMOTE_VER" "$PUBLIC_BASE" "$IPA_NAME" "$REPO" "$REMOTE_VER" > "$TMP_MAN"
 mv -f "$TMP_MAN" "$DATA_DIR/$MANIFEST"
 chmod 644 "$DATA_DIR/$MANIFEST" 2>/dev/null
 
@@ -146,7 +147,8 @@ chmod 644 "$DATA_DIR/$MANIFEST" 2>/dev/null
 #  JS 端拿到原始字节自己解码，全程绕开原生 JSON 解析。
 MANIFEST_AS_IPA="manifest-trilium.ipa"
 TMP_MI="$DATA_DIR/.${MANIFEST_AS_IPA}.tmp"
-printf '{"version": "%s", "ipaUrl": "%s/%s"}\n' "$REMOTE_VER" "$PUBLIC_BASE" "$IPA_NAME" > "$TMP_MI"
+printf '{"version": "%s", "ipaUrl": "%s/%s", "releaseUrl": "https://github.com/%s/releases/tag/v%s"}\n' \
+    "$REMOTE_VER" "$PUBLIC_BASE" "$IPA_NAME" "$REPO" "$REMOTE_VER" > "$TMP_MI"
 mv -f "$TMP_MI" "$DATA_DIR/$MANIFEST_AS_IPA"
 chmod 644 "$DATA_DIR/$MANIFEST_AS_IPA" 2>/dev/null
 

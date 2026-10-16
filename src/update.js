@@ -54,7 +54,7 @@ export function isNewer(a, b) {
   return false;
 }
 
-/** 拉取远端清单，返回 { current, latest, ipaUrl, hasUpdate }；网络失败会 throw。 */
+/** 拉取远端清单，返回 { current, latest, ipaUrl, releaseUrl, hasUpdate }；网络失败会 throw。 */
 export async function checkUpdate() {
   const { data: m, via, contentType, bytes } = await fetchManifestDetailed();
   const latest = String(m.version || '');
@@ -62,7 +62,7 @@ export async function checkUpdate() {
     current: APP_VERSION,
     latest,
     ipaUrl: m.ipaUrl || IPA_URL_FALLBACK,
-    schemes: Array.isArray(m.schemes) ? m.schemes : null,
+    releaseUrl: String(m.releaseUrl || 'https://github.com/hhxxc/trilium-mobile/releases/latest'),
     hasUpdate: isNewer(latest, APP_VERSION),
     via,
     contentType,

@@ -182,6 +182,7 @@ onMounted(() => { doCheckUpdate(true); });
   <template v-if="upd && upd.hasUpdate">
     <button class="btn" @click="doUpdate">直接唤起 TrollStore 安装 v{{ upd.latest }}</button>
     <button class="btn secondary" @click="doCopyLink">复制直链</button>
+    <a class="release-link" :href="upd.releaseUrl" target="_blank" rel="noopener">点此查看更新内容</a>
     <p style="font-size:12px; color:var(--muted); margin:4px 16px 8px; line-height:1.6;">
       同变体会覆盖旧版并保留数据。点「直接唤起」后如果跳到了「放大器」，说明这台设备上
       TrollStore 没接管放大器，用「复制直链」到 TrollStore 里从 URL 安装即可。

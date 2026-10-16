@@ -141,6 +141,7 @@ def main():
             manifest = {
                 "version": args.version,
                 "ipaUrl": "%s/%s" % (PUBLIC_BASE.rstrip("/"), args.name),
+                "releaseUrl": "https://github.com/hhxxc/trilium-mobile/releases/tag/v%s" % args.version,
             }
             tmp = os.path.join(tempfile.gettempdir(), "latest-trilium.json")
             with open(tmp, "w", encoding="utf-8") as f:
