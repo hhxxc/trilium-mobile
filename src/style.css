@@ -159,10 +159,3 @@ body { font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif; 
 .tree-row .tree-ic.leaf { background: transparent; }
 .tree-row .tree-count { font-size: 13px; color: var(--muted); }
 .tree-row .arrow { color: rgba(60, 60, 67, 0.3); font-size: 19px; font-weight: 700; }
-
-/* ---------- 锁屏 ---------- */
-.lock-glyph {
-  width: 74px; height: 74px; margin: 30px auto 4px; border-radius: 18px; background: var(--tint);
-  display: flex; align-items: center; justify-content: center; font-size: 34px;
-  user-select: none; -webkit-user-select: none;
-}
