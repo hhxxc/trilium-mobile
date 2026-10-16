@@ -71,13 +71,15 @@ async function doDiagnose() {
   }
 }
 
-// ---------- 应用内更新（交互照抄巢记 NestKeep） ----------
+// ---------- 应用内更新（交互照抄巢记 NestKeep：下载 IPA → 系统分享面板 → 选 TrollStore） ----------
 const upd = ref(null);        // checkUpdate() 的结果
 const updMsg = ref('');       // 检查/更新过程提示
 const updChecking = ref(false);
 const updDetail = ref('');    // 诊断细节（通道/HTTP/content-type/字节数）
 const showDetail = ref(false);
 const showSteps = ref(false); // 复制直链后显示安装步骤
+const dlState = ref('idle');  // idle | downloading | ready | error
+let ipaFile = null;           // 已下载的 IPA File 对象（内存 ~600KB，可接受）
 
 async function doCheckUpdate(silent = false) {
   if (!silent) updChecking.value = true;
@@ -89,7 +91,9 @@ async function doCheckUpdate(silent = false) {
       `通道 ${upd.value.via}｜HTTP 200｜content-type ${upd.value.contentType || '(无)'}｜${upd.value.bytes} 字节\n` +
       `本地 v${upd.value.current} → 云端 v${upd.value.latest}`;
     if (upd.value.hasUpdate) {
-      updMsg.value = '';   // 有新版时正文交给卡片展示
+      updMsg.value = '';
+      dlState.value = 'idle';
+      ipaFile = null;
     } else {
       updMsg.value = silent ? '' : '已是最新版本';
     }
@@ -101,18 +105,63 @@ async function doCheckUpdate(silent = false) {
   }
 }
 
-/** 直接唤起 TrollStore（apple-magnifier）。若跳到「放大器」说明未接管 scheme，用复制直链兜底 */
-function doUpdate() {
+/** 下载 IPA 到内存（CapacitorHttp arraybuffer → base64 → File），完成后弹系统分享面板 */
+async function doDownloadAndShare() {
+  if (!upd.value) return;
+  if (dlState.value === 'ready' && ipaFile) { await shareIpaFile(); return; }
+  dlState.value = 'downloading';
+  dlMsg.value = '正在下载安装包…';
+  try {
+    const { CapacitorHttp } = await import('@capacitor/core');
+    const res = await CapacitorHttp.request({
+      url: upd.value.ipaUrl,
+      method: 'GET',
+      responseType: 'arraybuffer',
+      connectTimeout: 30000,
+      readTimeout: 180000,
+    });
+    if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+    const bin = atob(String(res.data || ''));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    // 校验 zip 魔数（IPA 本质是 zip），防止把劫持的 HTML 当包分享出去
+    if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) throw new Error('下载内容不是有效的安装包（开头不是 PK）');
+    ipaFile = new File([bytes], `Trilium-${upd.value.latest}.ipa`, { type: 'application/octet-stream' });
+    dlState.value = 'ready';
+    dlMsg.value = '';
+    await shareIpaFile();
+  } catch (e) {
+    dlState.value = 'error';
+    dlMsg.value = '下载失败：' + (e.message || e);
+  }
+}
+
+/** 弹 iOS 系统分享面板，用户选 TrollStore 直接安装 */
+async function shareIpaFile() {
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [ipaFile] })) {
+      await navigator.share({ files: [ipaFile], title: `Trilium v${upd.value.latest}` });
+    } else {
+      dlMsg.value = '此系统不支持直接分享文件，用下面的「复制直链」安装即可。';
+      showSteps.value = true;
+    }
+  } catch (e) {
+    if (e && e.name !== 'AbortError') dlMsg.value = '分享失败：' + (e.message || e);
+  }
+}
+
+/** 直接唤起 TrollStore（apple-magnifier）——分享面板不可用时的备用 */
+function doMagnifier() {
   if (!upd.value) return;
   try {
     startTrollStoreUpdate(upd.value.ipaUrl, 'apple-magnifier');
-    updMsg.value = '已唤起 TrollStore。若跳到了「放大器」，说明 TrollStore 没接管放大器，用下面的复制直链粘贴安装即可。';
+    updMsg.value = '已唤起 TrollStore。若跳到了「放大器」没反应，用「复制直链」粘贴安装即可。';
   } catch (e) {
     updMsg.value = '拉起失败：' + (e.message || e);
   }
 }
 
-/** 复制 IPA 直链（巢记模式兜底：到 TrollStore 里「从 URL 安装」粘贴） */
+/** 复制 IPA 直链（兜底：TrollStore 里「从 URL 安装」粘贴） */
 function doCopyLink() {
   if (!upd.value) return;
   const link = upd.value.ipaUrl;
@@ -124,6 +173,10 @@ function doCopyLink() {
     showSteps.value = true;
     updMsg.value = '直链：' + link;
   }
+}
+
+function openRelease() {
+  if (upd.value && upd.value.releaseUrl) window.open(upd.value.releaseUrl, '_blank', 'noopener');
 }
 
 function copyDetail() {
@@ -180,24 +233,39 @@ onMounted(() => { doCheckUpdate(true); });
   </div>
 
   <template v-if="upd && upd.hasUpdate">
-    <button class="btn" @click="doUpdate">直接唤起 TrollStore 安装 v{{ upd.latest }}</button>
-    <button class="btn secondary" @click="doCopyLink">复制直链</button>
-    <a class="release-link" :href="upd.releaseUrl" target="_blank" rel="noopener">点此查看更新内容</a>
-    <p style="font-size:12px; color:var(--muted); margin:4px 16px 8px; line-height:1.6;">
-      同变体会覆盖旧版并保留数据。点「直接唤起」后如果跳到了「放大器」，说明这台设备上
-      TrollStore 没接管放大器，用「复制直链」到 TrollStore 里从 URL 安装即可。
-    </p>
-    <template v-if="showSteps">
-      <div class="card" style="margin:8px 16px;">
-        <div class="title" style="font-size:14px;">安装步骤</div>
-        <div class="meta" style="line-height:1.8;">
-          1. 打开 TrollStore<br />
-          2. 点右上角「+」<br />
-          3. 选「从 URL 安装」，粘贴链接<br />
-          4. 确认安装（同变体才会覆盖旧版）
-        </div>
+    <div class="upd-hero">
+      <div class="upd-icon">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+          <path d="M12 4v12m0 0l-5-5m5 5l5-5" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
       </div>
-    </template>
+      <div class="upd-title">发现新版本 v{{ upd.latest }}</div>
+      <div class="upd-sub">当前版本 v{{ upd.current }}</div>
+    </div>
+    <button class="btn" :disabled="dlState === 'downloading'" @click="doDownloadAndShare">
+      {{ dlState === 'downloading' ? '正在下载…' : (dlState === 'ready' ? '再次弹出安装面板' : '点此安装') }}
+    </button>
+    <p style="font-size:12px; color:var(--muted); margin:4px 16px 8px; line-height:1.6;">
+      安装包下载完成后会弹出系统分享面板，选择 TrollStore 确认安装即可（同变体会覆盖旧版并保留数据）。
+    </p>
+    <a class="release-link" style="margin-bottom:8px;" @click.prevent="doDownloadAndShare()">重新下载</a>
+    <button class="btn secondary" @click="openRelease">打开发布页</button>
+    <details style="margin:10px 16px;">
+      <summary style="font-size:12px; color:var(--muted);">其他安装方式（分享面板没弹出时用）</summary>
+      <button class="btn secondary" style="margin-top:8px;" @click="doMagnifier">直接唤起 TrollStore</button>
+      <button class="btn secondary" @click="doCopyLink">复制直链</button>
+      <template v-if="showSteps">
+        <div class="card" style="margin:8px 0 0;">
+          <div class="title" style="font-size:14px;">安装步骤</div>
+          <div class="meta" style="line-height:1.8;">
+            1. 打开 TrollStore<br />
+            2. 点右上角「+」<br />
+            3. 选「从 URL 安装」，粘贴链接<br />
+            4. 确认安装（同变体才会覆盖旧版）
+          </div>
+        </div>
+      </template>
+    </details>
   </template>
 
   <p v-if="updMsg" style="font-size:13px; color:var(--muted); margin:8px 16px;">{{ updMsg }}</p>
