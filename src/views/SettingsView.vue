@@ -5,7 +5,7 @@ import { loadSettings, saveSettings, login, logout, appInfo, resetAuthExpiredFla
 
 const props = defineProps({ notice: { type: String, default: '' } });
 const emit = defineEmits(['notice-consumed']);
-import { APP_VERSION, checkUpdate, startTrollStoreUpdate } from '../update.js';
+import { APP_VERSION, checkUpdate, startTrollStoreUpdate, probeManifest } from '../update.js';
 
 const settings = loadSettings();
 const server = ref(settings.server);
@@ -58,7 +58,12 @@ async function doDiagnose() {
   diagBusy.value = true;
   diagOut.value = '检测中…';
   try {
-    diagOut.value = await diagnose(server.value, loadSettings().token);
+    const base = await diagnose(server.value, loadSettings().token);
+    const p = await probeManifest();
+    const updLine = p.ok
+      ? `更新清单：可达（服务端最新 v${p.version}，通道 ${p.via || '?'}）`
+      : `更新清单：不可达 → ${p.error}\n  （地址 ${p.url}）`;
+    diagOut.value = base + '\n' + updLine;
   } catch (e) {
     diagOut.value = '检测异常：' + (e.message || e);
   } finally {

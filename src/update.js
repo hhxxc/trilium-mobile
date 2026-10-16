@@ -8,6 +8,7 @@
 // 国内直连 GitHub 不可靠，所以走 NAS。
 
 import pkg from '../package.json' with { type: 'json' };
+import axios from 'axios';
 
 const MANIFEST_URL = 'https://ezbookx.x.ddnsto.com/api/nestkeep/latest-trilium.json';
 const IPA_URL_FALLBACK = 'https://ezbookx.x.ddnsto.com/api/nestkeep/trilium-mobile.ipa';
@@ -30,11 +31,21 @@ export function isNewer(a, b) {
   return false;
 }
 
-/** 拉取远端清单，返回 { current, latest, ipaUrl, hasUpdate }；网络失败会 throw */
+/** 拉取远端清单，返回 { current, latest, ipaUrl, hasUpdate }；网络失败会 throw。
+ *
+ *  ⚠️ 「检查更新」曾报 Load failed 的根因（2026-10-16 读 iOS 原生源码定位）：
+ *  iOS 上启用了 CapacitorHttp（绕 CORS 必需），它把 window.fetch 做了 patch，
+ *  而 patch 后的 fetch 分两条路（见 @capacitor/ios/.../native-bridge.js）：
+ *    · GET/HEAD/OPTIONS/TRACE → createProxyUrl() 拼成
+ *        <serverUrl>/_capacitor_http_interceptor_?u=<编码后的真URL>
+ *      再交给 WKWebView，依赖原生 WebViewAssetHandler 拦截转发 —— 对**外站 HTTPS** 不稳，报 Load failed
+ *    · POST/PUT/PATCH/DELETE → cap.nativePromise('CapacitorHttp','request') 原生网络栈直连 —— 稳定
+ *  笔记读写以 POST/PUT/PATCH 为主，所以一直正常；唯独「检查更新」是纯 GET，才暴露这个问题。
+ *
+ *  因此这里不再依赖被 patch 的 fetch，直接调 CapacitorHttp 插件的原生方法（等价于 POST 那条稳定路径），
+ *  拿不到插件时再退回 fetch。失败时把每条的错因都带上，便于在 App 里直接定位。 */
 export async function checkUpdate() {
-  const r = await fetch(MANIFEST_URL, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const m = await r.json();
+  const m = await fetchManifest();
   const latest = String(m.version || '');
   return {
     current: APP_VERSION,
@@ -42,6 +53,55 @@ export async function checkUpdate() {
     ipaUrl: m.ipaUrl || IPA_URL_FALLBACK,
     hasUpdate: isNewer(latest, APP_VERSION),
   };
+}
+
+/** 导出给「连接自检」用：单独探测清单可达性，并报告是哪条通道打通的 */
+export async function probeManifest() {
+  try {
+    const { data, via } = await fetchManifestDetailed();
+    return { ok: true, version: String(data.version || ''), url: MANIFEST_URL, via };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e), url: MANIFEST_URL };
+  }
+}
+
+async function fetchManifest() {
+  return (await fetchManifestDetailed()).data;
+}
+
+async function fetchManifestDetailed() {
+  // 通道① 直接调 CapacitorHttp 插件的原生 request（只支持原生平台；web 上会 throw）
+  //   这条等价于笔记写操作走的稳定路径，不经过 patch 后的 fetch proxy。
+  // 通道② axios（其 XHR 在 iOS 上会被 patch，作为兜底）
+  // 通道③ 裸 fetch（桌面/浏览器调试场景）
+  const attempts = [
+    ['capacitor-http', async () => {
+      const { CapacitorHttp } = await import('@capacitor/core');
+      const res = await CapacitorHttp.request({
+        url: MANIFEST_URL,
+        method: 'GET',
+        headers: { 'Cache-Control': 'no-cache' },
+        connectTimeout: 20000,
+        readTimeout: 20000,
+      });
+      if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+      // 原生通道在 content-type 是 json 时可能已把 data 解析成对象
+      return typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+    }],
+    ['axios', async () => (await axios.get(MANIFEST_URL, { timeout: 20000, headers: { 'Cache-Control': 'no-cache' } })).data],
+    ['fetch', async () => {
+      const r = await fetch(MANIFEST_URL, { cache: 'no-store' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }],
+  ];
+  const errs = [];
+  for (const [name, fn] of attempts) {
+    try { return { data: await fn(), via: name }; } catch (e) {
+      errs.push(`${name}: ${(e && e.message) || e}`);
+    }
+  }
+  throw new Error(errs.join(' | '));
 }
 
 /** 跳转 TrollStore 安装（覆盖安装，数据保留）。a.click() 让 Capacitor 把自定义协议交给系统 */
