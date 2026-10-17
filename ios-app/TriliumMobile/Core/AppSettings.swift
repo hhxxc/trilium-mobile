@@ -56,11 +56,19 @@ final class AppSettings: ObservableObject {
     }
 
     func save(token: String, server: String) {
+        // 服务器地址变了必须清缓存：缓存里的笔记内容/图片来自旧服务器，串台会显示错数据
+        let oldServer = self.server.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newServer = server.trimmingCharacters(in: .whitespacesAndNewlines)
         self.server = server
+        if oldServer != newServer {
+            NoteCache.shared.clearAll()
+        }
         self.token = token  // token 的 didSet 会自动更新 isLoggedIn
     }
 
     func logout() {
+        // 退出登录清本地缓存：隐私（换人/换设备不留痕）+ 防下次登录串台
+        NoteCache.shared.clearAll()
         self.token = ""  // token 的 didSet 会自动把 isLoggedIn 置 false
     }
 }

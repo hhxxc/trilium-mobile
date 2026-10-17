@@ -9,6 +9,7 @@ struct SettingsView: View {
 
     @State private var serverVersion = ""
     @State private var pendingShareVersion: String? = nil
+    @State private var cacheSize: Int64 = -1 // -1 = 未测量
 
     var body: some View {
         NavigationView {
@@ -35,6 +36,21 @@ struct SettingsView: View {
                         // 不在这里 logout/dismiss：实测 sheet 内 dismiss() 与根视图条件切换
                         // 竞争会导致面板残留。发信号让 MainView（sheet 的持有者）显式关闭
                         NotificationCenter.default.post(name: .performLogout, object: nil)
+                    }
+                }
+
+                Section("离线缓存") {
+                    HStack {
+                        Text("缓存大小")
+                        Spacer()
+                        Text(cacheSize < 0 ? "…" : fmtKB(cacheSize))
+                            .font(.footnote).foregroundColor(.secondary)
+                    }
+                    Button("清除缓存", role: .destructive) {
+                        NoteCache.shared.clearAll()
+                        cacheSize = 0
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                        AppLogger.shared.log("已清除离线缓存")
                     }
                 }
 
@@ -98,6 +114,7 @@ struct SettingsView: View {
                 if let info = try? await ETAPIClient.shared.appInfo() {
                     serverVersion = info.appVersion ?? ""
                 }
+                cacheSize = NoteCache.shared.totalSize()
             }
         }
         .navigationViewStyle(.stack)

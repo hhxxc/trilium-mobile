@@ -74,6 +74,17 @@ final class NoteCache {
         try? fm.removeItem(at: blobURL(noteId))
     }
 
+    /// 缓存目录总字节数（设置页展示用）
+    func totalSize() -> Int64 {
+        var size: Int64 = 0
+        if let e = fm.enumerator(at: root, includingPropertiesForKeys: [.fileSizeKey]) {
+            for case let url as URL in e {
+                size += Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            }
+        }
+        return size
+    }
+
     // MARK: - 清理
 
     func clearAll() {
