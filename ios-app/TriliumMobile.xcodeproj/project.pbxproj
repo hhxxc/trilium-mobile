@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		e47b4c4ac2e9521b82c11eb3 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = d99d34662c9654fd9e5388eb /* AppConfig.swift */; };
+		b9daf9e94ba559d4a23c2008 /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = daf85de2f3d3569fafbd0b50 /* AppLogger.swift */; };
 		a739eec146015f4398f5ba69 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = b2637d398dfb55f3936a5cad /* AppSettings.swift */; };
 		8b3254571e405f228b470adc /* ETAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = bce85afc71e65052a9ad963b /* ETAPIClient.swift */; };
 		c10582f7a3d15265bd52e0fa /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50008ff267ad5e9094a2dfff /* UpdateChecker.swift */; };
@@ -24,6 +25,7 @@
 
 /* Begin PBXFileReference section */
 		d99d34662c9654fd9e5388eb /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/AppConfig.swift; sourceTree = "<group>"; };
+		daf85de2f3d3569fafbd0b50 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/AppLogger.swift; sourceTree = "<group>"; };
 		b2637d398dfb55f3936a5cad /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/AppSettings.swift; sourceTree = "<group>"; };
 		bce85afc71e65052a9ad963b /* ETAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/ETAPIClient.swift; sourceTree = "<group>"; };
 		50008ff267ad5e9094a2dfff /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/UpdateChecker.swift; sourceTree = "<group>"; };
@@ -54,6 +56,7 @@
 			isa = PBXGroup;
 			children = (
 				d99d34662c9654fd9e5388eb /* AppConfig.swift */,
+				daf85de2f3d3569fafbd0b50 /* AppLogger.swift */,
 				b2637d398dfb55f3936a5cad /* AppSettings.swift */,
 				bce85afc71e65052a9ad963b /* ETAPIClient.swift */,
 				50008ff267ad5e9094a2dfff /* UpdateChecker.swift */,
@@ -148,6 +151,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				e47b4c4ac2e9521b82c11eb3 /* AppConfig.swift in Sources */,
+				b9daf9e94ba559d4a23c2008 /* AppLogger.swift in Sources */,
 				a739eec146015f4398f5ba69 /* AppSettings.swift in Sources */,
 				8b3254571e405f228b470adc /* ETAPIClient.swift in Sources */,
 				c10582f7a3d15265bd52e0fa /* UpdateChecker.swift in Sources */,

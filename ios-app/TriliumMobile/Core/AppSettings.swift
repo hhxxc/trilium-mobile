@@ -15,7 +15,11 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(server, forKey: Keys.server) }
     }
     @Published var token: String {
-        didSet { UserDefaults.standard.set(token, forKey: Keys.token) }
+        didSet {
+            UserDefaults.standard.set(token, forKey: Keys.token)
+            // 显式同步登录态，确保 RootView 的条件切换可靠触发
+            isLoggedIn = !token.isEmpty
+        }
     }
     @Published var inboxNoteId: String {
         didSet { UserDefaults.standard.set(inboxNoteId, forKey: Keys.inboxNoteId) }
@@ -23,6 +27,8 @@ final class AppSettings: ObservableObject {
     @Published var inboxTitle: String {
         didSet { UserDefaults.standard.set(inboxTitle, forKey: Keys.inboxTitle) }
     }
+    /// 登录态：独立 @Published，不用计算属性（避免 sheet/environmentObject 嵌套下响应断裂）
+    @Published var isLoggedIn: Bool
 
     /// 规范化后的服务器基地址（去尾部斜杠）
     var serverURL: URL {
@@ -31,23 +37,21 @@ final class AppSettings: ObservableObject {
         return URL(string: s) ?? URL(string: AppConfig.defaultServer)!
     }
 
-    /// 是否已登录（有 token 即视为已登录，业务接口 401 时再踢回登录）
-    var isLoggedIn: Bool { !token.isEmpty }
-
     private init() {
         let d = UserDefaults.standard
         server = d.string(forKey: Keys.server) ?? AppConfig.defaultServer
         token = d.string(forKey: Keys.token) ?? ""
         inboxNoteId = d.string(forKey: Keys.inboxNoteId) ?? ""
         inboxTitle = d.string(forKey: Keys.inboxTitle) ?? AppConfig.defaultInboxTitle
+        isLoggedIn = !token.isEmpty
     }
 
     func save(token: String, server: String) {
-        self.token = token
         self.server = server
+        self.token = token  // token 的 didSet 会自动更新 isLoggedIn
     }
 
     func logout() {
-        token = ""
+        self.token = ""  // token 的 didSet 会自动把 isLoggedIn 置 false
     }
 }

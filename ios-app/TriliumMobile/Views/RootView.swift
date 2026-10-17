@@ -23,23 +23,29 @@ struct RootView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .sessionExpired)) { _ in
+            AppLogger.shared.log("收到 sessionExpired 通知，执行 logout")
             settings.logout()
         }
         .task { await validateToken() }
+        .onChange(of: settings.isLoggedIn) { loggedIn in
+            AppLogger.shared.log("isLoggedIn 变为 \(loggedIn)")
+        }
     }
 
     /// 启动时用本地 token 实测一次：有效才放行，无效/过期则清 token 回登录页。
     private func validateToken() async {
         defer { validating = false }
-        guard settings.isLoggedIn else { return }
+        guard settings.isLoggedIn else {
+            AppLogger.shared.log("启动校验：无 token，直接进登录页")
+            return
+        }
         do {
             // getNote("root") 明确需要鉴权：token 失效返回 401 → 抛错；
             // 能读到 root 说明 token 真实有效
             _ = try await ETAPIClient.shared.getNote("root")
-            // 有效，保持登录态
+            AppLogger.shared.log("启动校验：token 有效，进主界面")
         } catch {
-            // 任何失败（401 token 失效 / 网络不可达等）都回登录页，
-            // 避免「显示已登录但实际连不上/无权限」的假象与风险
+            AppLogger.shared.log("启动校验失败：\(error.localizedDescription)，清 token 回登录页")
             settings.logout()
         }
     }

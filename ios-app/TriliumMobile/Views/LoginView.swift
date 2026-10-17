@@ -46,10 +46,12 @@ struct LoginView: View {
     private func doLogin() {
         busy = true
         status = "连接中…"
+        AppLogger.shared.log("点击登录：服务器 \(server)")
         Task {
             do {
                 let token = try await ETAPIClient.shared.login(password: password)
                 settings.save(token: token, server: server)
+                AppLogger.shared.log("登录成功：token 长度 \(token.count)")
                 password = ""
                 status = ""
             } catch {

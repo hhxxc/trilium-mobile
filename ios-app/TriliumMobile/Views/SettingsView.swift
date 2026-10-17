@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 设置页：连接信息 / 退出登录 / 应用内更新（检查更新 → 下载 IPA → 系统分享面板选 TrollStore）
 struct SettingsView: View {
@@ -30,8 +31,11 @@ struct SettingsView: View {
 
                 Section {
                     Button("退出登录", role: .destructive) {
+                        AppLogger.shared.log("点击退出登录：token 长度 \(settings.token.count)")
                         settings.logout()
-                        dismiss()  // 关键：先关 sheet，否则登录页被设置面板挡住，看着像"没反应"
+                        AppLogger.shared.log("退出登录后：isLoggedIn=\(settings.isLoggedIn), token 长度 \(settings.token.count)")
+                        dismiss()
+                        AppLogger.shared.log("已调用 dismiss() 关闭设置面板")
                     }
                 }
 
@@ -62,6 +66,17 @@ struct SettingsView: View {
 
                     if let result = update.result {
                         updateSection(for: result)
+                    }
+                }
+
+                Section("诊断日志") {
+                    Button("复制操作日志") { copyLog() }
+                    if !AppLogger.shared.entries.isEmpty {
+                        ForEach(AppLogger.shared.entries.suffix(20), id: \.self) { line in
+                            Text(line)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
             }
@@ -165,5 +180,11 @@ struct SettingsView: View {
     private func fmtKB(_ n: Int64) -> String {
         if n >= 1024 * 1024 { return String(format: "%.1f MB", Double(n) / 1024 / 1024) }
         return "\(n / 1024) KB"
+    }
+
+    private func copyLog() {
+        let text = AppLogger.shared.entries.joined(separator: "\n")
+        UIPasteboard.general.string = text
+        AppLogger.shared.log("已复制操作日志（\(AppLogger.shared.entries.count) 条）")
     }
 }
