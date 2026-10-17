@@ -42,9 +42,16 @@ struct NoteDetailView: View {
         loading = true
         do {
             let raw = try await ETAPIClient.shared.getContent(note.noteId)
-            html = Self.wrapForMobile(title: note.title, raw: raw, noteType: note.type)
+            // 诊断：把实际拿到的内容概况写日志，便于排查「正文空白」类问题
+            AppLogger.shared.log("阅读[\(note.title)]: type=\(note.type) 长度=\(raw.count) 开头=\(String(raw.prefix(80)).replacingOccurrences(of: "\n", with: " "))")
+            if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                html = Self.wrapForMobile(title: note.title, raw: "<p style='color:#8e8e93'>（空笔记）</p>", noteType: "text")
+            } else {
+                html = Self.wrapForMobile(title: note.title, raw: raw, noteType: note.type)
+            }
             errorMsg = ""
         } catch {
+            AppLogger.shared.log("阅读[\(note.title)]失败: \(error.localizedDescription)")
             errorMsg = "加载失败：\(error.localizedDescription)"
         }
         loading = false
@@ -69,6 +76,26 @@ struct NoteDetailView: View {
         } else {
             // text 笔记 content 本身就是 HTML，直接用
             bodyContent = raw
+        }
+
+        // 防御：若服务端返回的是完整 HTML 文档（含 <html>/<body>），不能嵌进骨架
+        //（嵌套文档标签会被浏览器丢弃，head 里的脚本/样式可能干扰渲染）。
+        // 此时直接用原文档，把移动端样式注入 </head> 前。
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if noteType != "code" && (trimmed.hasPrefix("<!doctype") || trimmed.hasPrefix("<html")) {
+            let mobileCSS = """
+            <style>
+              body { font-family: -apple-system, "PingFang SC", sans-serif;
+                     font-size: 17px; line-height: 1.75; padding: 16px 18px 60px;
+                     word-wrap: break-word; -webkit-text-size-adjust: 100%; }
+              img { max-width: 100%; height: auto; }
+              pre { overflow-x: auto; }
+            </style>
+            """
+            if raw.lowercased().contains("</head>") {
+                return raw.replacingOccurrences(of: "</head>", with: mobileCSS + "</head>", options: .caseInsensitive)
+            }
+            return raw
         }
 
         return """
@@ -120,7 +147,8 @@ struct NoteDetailView: View {
     }
 }
 
-/// 本地 HTML 渲染（loadHTMLString，不联网加载 Trilium 桌面页）
+/// 本地 HTML 渲染（loadHTMLString，不加载 Trilium 桌面页）。
+/// baseURL 指向服务器：笔记里的相对路径图片/附件（/api/attachments/...）才能加载。
 struct ContentWebView: UIViewRepresentable {
     let html: String
 
@@ -128,15 +156,16 @@ struct ContentWebView: UIViewRepresentable {
         let wv = WKWebView()
         wv.isOpaque = false
         wv.backgroundColor = .clear
-        wv.loadHTMLString(html, baseURL: nil)
+        wv.tag = html.hashValue
+        wv.loadHTMLString(html, baseURL: AppSettings.shared.serverURL)
         return wv
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        // 内容变化时重载（如编辑返回后刷新）
+        // 内容变化时重载（如编辑返回后刷新）；tag 记上次已渲染内容，避免重复加载
         if uiView.tag != html.hashValue {
             uiView.tag = html.hashValue
-            uiView.loadHTMLString(html, baseURL: nil)
+            uiView.loadHTMLString(html, baseURL: AppSettings.shared.serverURL)
         }
     }
 }
