@@ -217,7 +217,11 @@ struct ETAPIClient {
         return (try? JSONDecoder().decode([Note].self, from: data)) ?? []
     }
 
-    /// 子树下的直接子笔记（树的展开用；ancestorDepth=eq1 表示仅直接子级）
+    /// 子树下的直接子笔记（树的展开用；ancestorDepth=eq1 表示仅直接子级）。
+    /// ⚠️ 搜索接口返回的 Note 不含 childNoteIds（服务端批量查询不 load children），
+    ///   导致「text 类型但实际是容器」的笔记（如「我的笔记」）被误判为叶子。
+    ///   故这里拿到子笔记 id 后，并发 getNote 补全每个子笔记的 childNoteIds，
+    ///   树才能正确判断哪些可展开。每层节点少（十几个），并发拉很快。
     func childNotes(of parentId: String) async throws -> [Note] {
         var q = [URLQueryItem(name: "search", value: Self.matchAll)]
         q.append(URLQueryItem(name: "ancestorNoteId", value: parentId))
@@ -226,10 +230,26 @@ struct ETAPIClient {
         q.append(URLQueryItem(name: "orderDirection", value: "asc"))
         q.append(URLQueryItem(name: "limit", value: "500"))
         let data = try await raw("/etapi/notes", query: q)
+        var list: [Note]
         if let resp = try? JSONDecoder().decode(SearchResponse.self, from: data), let r = resp.results {
-            return r
+            list = r
+        } else {
+            list = (try? JSONDecoder().decode([Note].self, from: data)) ?? []
         }
-        return (try? JSONDecoder().decode([Note].self, from: data)) ?? []
+        // 并发补全 childNoteIds（判断容器用）
+        return await withTaskGroup(of: (Int, Note).self) { group in
+            for (i, n) in list.enumerated() {
+                group.addTask {
+                    if let full = try? await self.getNote(n.noteId) {
+                        return (i, full)
+                    }
+                    return (i, n)
+                }
+            }
+            var out: [(Int, Note)] = []
+            for await pair in group { out.append(pair) }
+            return out.sorted { $0.0 < $1.0 }.map(\.1)
+        }
     }
 
     // MARK: - 收件箱

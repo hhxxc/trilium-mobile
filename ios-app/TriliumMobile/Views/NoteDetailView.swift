@@ -187,20 +187,33 @@ struct NoteDetailView: View {
         }
     }
 
-    /// 下载附件到临时文件 → QuickLook 原生预览（PDF/Office/图片通吃）
-    /// 已下载过（本次会话）直接打开；文件名带扩展名，QuickLook 按扩展名选渲染器
+    /// 下载附件到稳定缓存目录 → QuickLook 原生预览（PDF/Office/图片通吃）
+    /// ⚠️ 缓存必须落在 Caches 而不是 temporaryDirectory：iOS 会随时清临时目录，
+    ///   导致「退出回来又重新下载」。已缓存则秒开。
     private func previewFile() async {
         fileErrorMsg = ""
-        // 1. 临时文件路径（title 作文件名，保留扩展名供 QuickLook 识别格式）
         var name = note.title.replacingOccurrences(of: "/", with: "_")
         if name.isEmpty { name = "attachment" }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-        // 本次会话已下载过 → 直接预览
+        // 稳定缓存目录（跨会话保留）
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("TriliumAttachments", isDirectory: true)
+        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        let url = cacheDir.appendingPathComponent(name)
+
+        // 1. 已缓存 → 秒开
         if FileManager.default.fileExists(atPath: url.path) {
             previewURL = url
             return
         }
-        // 2. 下载（带进度）
+        // 2. NoteCache blob 有数据 → 落盘后秒开
+        if let cached = NoteCache.shared.loadBlob(note.noteId) {
+            do {
+                try cached.write(to: url)
+                previewURL = url
+                return
+            } catch {}
+        }
+        // 3. 下载（带进度）
         fileDownloading = true
         fileProgress = 0
         do {
@@ -210,7 +223,7 @@ struct NoteDetailView: View {
                 }
             }
             try data.write(to: url)
-            NoteCache.shared.saveBlob(note.noteId, data: data) // 顺手缓存，离线可再开
+            NoteCache.shared.saveBlob(note.noteId, data: data)
             fileDownloading = false
             previewURL = url
             AppLogger.shared.log("附件下载完成: \(name) \(data.count)字节")
