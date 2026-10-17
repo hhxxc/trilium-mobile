@@ -187,16 +187,8 @@ struct ETAPIClient {
         if !s.inboxNoteId.isEmpty {
             if (try? await getNote(s.inboxNoteId)) != nil { return s.inboxNoteId }
         }
-        let root = try await getNote("root")
-        // 并发拉 root 子笔记（旧版串行逐个 getNote，N+1 慢）
-        let children: [Note] = await withTaskGroup(of: Note?.self) { group -> [Note] in
-            for id in root.childNoteIds ?? [] {
-                group.addTask { try? await self.getNote(id) }
-            }
-            var out: [Note] = []
-            for case let n? in group { out.append(n) }
-            return out
-        }
+        // 用参数化 childNotes 一次拉 root 直接子笔记，找标题匹配的收件箱
+        let children = try await childNotes(of: "root")
         if let hit = children.first(where: { $0.title == s.inboxTitle }) {
             s.inboxNoteId = hit.noteId
             return hit.noteId
