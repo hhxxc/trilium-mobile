@@ -382,6 +382,66 @@ struct NativeEditorView: View {
 
 /// HTML 包装工具（抽离，供阅读页复用）
 enum NoteHTML {
+
+/// 代码块增强：给每个 pre 动态包一层 + 右上角「复制」按钮（纯 JS，无需原生桥）。
+    /// clipboard API 不可用时降级 execCommand；完整 HTML 文档分支同样注入。
+    private static let codeEnhance = """
+    <style>
+      .code-wrap { position: relative; }
+      .code-wrap .copy-btn {
+        position: absolute; top: 6px; right: 6px; z-index: 5;
+        font-size: 12px; padding: 2px 8px; border-radius: 6px;
+        border: 1px solid rgba(120,120,128,0.3);
+        background: rgba(255,255,255,0.88); color: #333; opacity: 0.85;
+      }
+      @media (prefers-color-scheme: dark) {
+        .code-wrap .copy-btn { background: rgba(60,60,67,0.88); color: #ddd; }
+      }
+    </style>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('pre').forEach(function(pre) {
+        if (pre.parentElement && pre.parentElement.className === 'code-wrap') return;
+        var wrap = document.createElement('div');
+        wrap.className = 'code-wrap';
+        pre.parentNode.insertBefore(wrap, pre);
+        wrap.appendChild(pre);
+        var btn = document.createElement('button');
+        btn.className = 'copy-btn'; btn.type = 'button'; btn.textContent = '复制';
+        wrap.appendChild(btn);
+      });
+    });
+    document.addEventListener('click', function(e) {
+      var btn = e.target.closest ? e.target.closest('.copy-btn') : null;
+      if (!btn) return;
+      var pre = btn.parentElement.querySelector('pre');
+      var text = pre ? pre.innerText : '';
+      var done = function() {
+        btn.textContent = '已复制';
+        setTimeout(function() { btn.textContent = '复制'; }, 1500);
+      };
+      var fallback = function() {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); done(); } catch (err) {}
+        document.body.removeChild(ta);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(fallback);
+      } else { fallback(); }
+    });
+    </script>
+    """
+
+    /// 给任意 HTML 注入代码块增强（有 </head> 插头部，否则放开头）
+    private static func injectEnhance(_ html: String) -> String {
+        if html.lowercased().contains("</head>") {
+            return html.replacingOccurrences(of: "</head>", with: codeEnhance + "</head>", options: .caseInsensitive)
+        }
+        return codeEnhance + html
+    }
+
     /// fontScale：阅读页字号缩放（1.0 = 17px 标准）
     static func wrap(title: String, raw: String, noteType: String, fontScale: Double = 1.0) -> String {
         let fontSize = Int((17 * fontScale).rounded())
@@ -401,7 +461,7 @@ enum NoteHTML {
             bodyContent = raw
         }
 
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if noteType != "code" && (trimmed.hasPrefix("<!doctype") || trimmed.hasPrefix("<html")) {
             let mobileCSS = """
             <style>
@@ -413,12 +473,12 @@ enum NoteHTML {
             </style>
             """
             if raw.lowercased().contains("</head>") {
-                return raw.replacingOccurrences(of: "</head>", with: mobileCSS + "</head>", options: .caseInsensitive)
+                return injectEnhance(raw.replacingOccurrences(of: "</head>", with: mobileCSS + "</head>", options: .caseInsensitive))
             }
-            return raw
+            return injectEnhance(raw)
         }
 
-        return """
+        let template = """
         <!DOCTYPE html>
         <html><head>
         <meta charset="utf-8">
@@ -464,6 +524,7 @@ enum NoteHTML {
         \(bodyContent)
         </body></html>
         """
+        return injectEnhance(template)
     }
 }
 

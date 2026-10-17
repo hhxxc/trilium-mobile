@@ -63,7 +63,12 @@ struct TreeView: View {
 
     private var sheetBody: some View {
         Group {
-            treeContent
+            // sheet 模式同样给面包屑（点击任意层级跳回，配合层级缓存秒开），
+            // 深层浏览时比反复点「返回」直观得多
+            VStack(spacing: 0) {
+                if stack.count > 1 { breadcrumb }
+                treeContent
+            }
         }
         .navigationTitle(stack.last?.title ?? "笔记")
         .navigationBarTitleDisplayMode(.inline)
