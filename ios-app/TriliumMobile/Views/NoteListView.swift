@@ -1,0 +1,158 @@
+import SwiftUI
+
+/// 首页：笔记列表（有道云风格，列表优先）。
+/// 大标题 + 搜索入口 + 笔记列表（标题/时间分组），右下角悬浮「+」速记。
+struct NoteListView: View {
+    @State private var notes: [Note] = []
+    @State private var loading = false
+    @State private var errorMsg = ""
+    @State private var showCompose = false
+    @State private var searchQuery = ""
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            content
+            composeButton
+        }
+        .navigationTitle("笔记")
+        .navigationBarTitleDisplayMode(.large)
+        .searchable(text: $searchQuery, prompt: "搜索笔记")
+        .onSubmit(of: .search) { Task { await load() } }
+        .onChange(of: searchQuery) { _ in
+            if searchQuery.isEmpty { Task { await load() } }
+        }
+        .task { await load() }
+        .refreshable { await load() }
+        .sheet(isPresented: $showCompose) {
+            ComposeView(onSaved: { await load() })
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if loading && notes.isEmpty {
+            ProgressView("加载中…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if !errorMsg.isEmpty && notes.isEmpty {
+            VStack(spacing: 12) {
+                Image(systemName: "wifi.exclamationmark")
+                    .font(.system(size: 40)).foregroundColor(.secondary)
+                Text(errorMsg).font(.footnote).foregroundColor(.secondary)
+                Button("重试") { Task { await load() } }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List {
+                if !errorMsg.isEmpty {
+                    Text(errorMsg).font(.footnote).foregroundColor(.secondary)
+                }
+                ForEach(notes) { note in
+                    NavigationLink(destination: EditorView(note: note)) {
+                        NoteRow(note: note)
+                    }
+                }
+            }
+            .listStyle(.plain)
+        }
+    }
+
+    private var composeButton: some View {
+        Button { showCompose = true } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 56, height: 56)
+                .background(Circle().fill(Color(red: 0.17, green: 0.61, blue: 0.56)))
+                .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+        }
+        .padding(.trailing, 20)
+        .padding(.bottom, 20)
+    }
+
+    private func load() async {
+        loading = true
+        do {
+            let q = searchQuery.trimmingCharacters(in: .whitespaces)
+            if q.isEmpty {
+                notes = try await ETAPIClient.shared.recentNotes()
+            } else {
+                notes = try await ETAPIClient.shared.searchNotes(q)
+            }
+            errorMsg = ""
+        } catch {
+            errorMsg = "加载失败：\(error.localizedDescription)"
+        }
+        loading = false
+    }
+}
+
+/// 笔记列表行：标题 + 修改时间
+struct NoteRow: View {
+    let note: Note
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(note.title.isEmpty ? "（无标题）" : note.title)
+                .font(.body)
+                .lineLimit(2)
+            if !note.modifiedDisplay.isEmpty {
+                Text(note.modifiedDisplay)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// 速记弹窗：输入一句话存到收件箱
+struct ComposeView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @State private var busy = false
+    @State private var errorMsg = ""
+    var onSaved: () async -> Void
+
+    var body: some View {
+        NavigationView {
+            VStack(alignment: .leading, spacing: 12) {
+                TextField("记点什么…（存入收件箱）", text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.body)
+                if !errorMsg.isEmpty {
+                    Text(errorMsg).font(.footnote).foregroundColor(.red)
+                }
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("新建笔记")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { save() }
+                        .disabled(busy || text.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+    }
+
+    private func save() {
+        let content = text.trimmingCharacters(in: .whitespaces)
+        guard !content.isEmpty else { return }
+        busy = true
+        Task {
+            do {
+                let inboxId = try await ETAPIClient.shared.ensureInbox()
+                _ = try await ETAPIClient.shared.createNote(parentNoteId: inboxId, title: content)
+                await onSaved()
+                dismiss()
+            } catch {
+                errorMsg = "保存失败：\(error.localizedDescription)"
+            }
+            busy = false
+        }
+    }
+}

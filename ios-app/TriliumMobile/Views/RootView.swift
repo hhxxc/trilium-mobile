@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 根视图：未登录 → 登录页；已登录 → 主界面（Tab）。
+/// 根视图：未登录 → 登录页；已登录 → 主界面（列表优先，有道云风格）。
 /// 监听会话过期通知（服务端重启导致 token 失效），自动踢回登录页。
 struct RootView: View {
     @EnvironmentObject private var settings: AppSettings
@@ -8,7 +8,7 @@ struct RootView: View {
     var body: some View {
         Group {
             if settings.isLoggedIn {
-                MainTabView()
+                MainView()
             } else {
                 LoginView()
             }
@@ -19,18 +19,28 @@ struct RootView: View {
     }
 }
 
-/// 主界面：4 个 Tab（最近 / 笔记树 / 搜索 / 设置）
-struct MainTabView: View {
+/// 主界面：单一 NavigationView，列表优先（有道云风格）。
+/// 首页=笔记列表；右上角入口到「树」与「设置」；右下角悬浮「+」速记。
+struct MainView: View {
+    @State private var showTree = false
+    @State private var showSettings = false
+
     var body: some View {
-        TabView {
-            RecentView()
-                .tabItem { Label("最近", systemImage: "clock") }
-            TreeView()
-                .tabItem { Label("笔记树", systemImage: "list.bullet") }
-            SearchView()
-                .tabItem { Label("搜索", systemImage: "magnifyingglass") }
-            SettingsView()
-                .tabItem { Label("设置", systemImage: "gearshape") }
+        NavigationView {
+            NoteListView()
+                .toolbar {
+                    ToolbarItemGroup(placement: .navigationBarTrailing) {
+                        Button { showTree = true } label: {
+                            Image(systemName: "folder")
+                        }
+                        Button { showSettings = true } label: {
+                            Image(systemName: "gearshape")
+                        }
+                    }
+                }
+                .sheet(isPresented: $showTree) { TreeView() }
+                .sheet(isPresented: $showSettings) { SettingsView() }
         }
+        .navigationViewStyle(.stack)
     }
 }

@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// 笔记树：面包屑层级浏览（从 root 逐层展开）
+/// 笔记树：面包屑层级浏览（从 root 逐层展开），作为 sheet 弹出。
 struct TreeView: View {
+    @Environment(\.dismiss) private var dismiss
     @State private var stack: [(id: String, title: String)] = [("root", "根目录")]
     @State private var children: [Note] = []
     @State private var loading = false
@@ -21,10 +22,7 @@ struct TreeView: View {
                 } else {
                     List {
                         ForEach(children) { note in
-                            NavigationLink(destination: EditorView(note: note)) {
-                                Label(note.title.isEmpty ? "（无标题）" : note.title,
-                                      systemImage: note.type == "text" ? "doc.text" : "folder")
-                            }
+                            row(for: note)
                         }
                     }
                     .listStyle(.plain)
@@ -38,10 +36,32 @@ struct TreeView: View {
                         Button("返回") { goUp() }
                     }
                 }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
             }
             .task { await loadCurrent() }
         }
         .navigationViewStyle(.stack)
+    }
+
+    /// 文件夹可点击展开下一层；text 笔记打开编辑器（用 sheet 里的导航）
+    @ViewBuilder
+    private func row(for note: Note) -> some View {
+        let isFolder = note.type != "text"
+        if isFolder {
+            Button {
+                stack.append((note.noteId, note.title))
+                Task { await loadCurrent() }
+            } label: {
+                Label(note.title.isEmpty ? "（无标题）" : note.title, systemImage: "folder")
+                    .foregroundColor(.primary)
+            }
+        } else {
+            NavigationLink(destination: EditorView(note: note)) {
+                Label(note.title.isEmpty ? "（无标题）" : note.title, systemImage: "doc.text")
+            }
+        }
     }
 
     private func loadCurrent() async {

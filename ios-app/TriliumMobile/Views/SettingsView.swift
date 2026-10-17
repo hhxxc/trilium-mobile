@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @ObservedObject private var update = UpdateStore.shared
+    @Environment(\.dismiss) private var dismiss
 
     @State private var serverVersion = ""
     @State private var pendingShareVersion: String? = nil
@@ -65,6 +66,12 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("设置")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
             .onChange(of: update.downloadState) { state in
                 // 用户点了安装、下载完成 → 自动弹分享面板
                 if let ver = pendingShareVersion, case .downloaded(let f) = state {
