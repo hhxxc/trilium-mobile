@@ -151,8 +151,9 @@ extension NoteCache {
                 case "patchTitle":
                     _ = try await ETAPIClient.shared.patchNote(op.noteId, fields: ["title": op.title ?? ""])
                 case "create":
+                    let parent = op.parentNoteId ?? (try await ETAPIClient.shared.ensureInbox())
                     _ = try await ETAPIClient.shared.createNote(
-                        parentNoteId: op.parentNoteId ?? try await ETAPIClient.shared.ensureInbox(),
+                        parentNoteId: parent,
                         title: op.title ?? "")
                 case "delete":
                     try await ETAPIClient.shared.deleteNote(op.noteId)
