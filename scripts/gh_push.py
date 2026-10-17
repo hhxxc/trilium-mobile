@@ -86,7 +86,10 @@ def _http(path, method="GET", payload=None):
 
 
 def run(cmd, binary=False, input_text=None):
-    r = subprocess.run(cmd, capture_output=True, text=not binary, input=input_text)
+    # 非二进制输出强制 UTF-8：Windows 默认用本地编码（GBK）解码，
+    # git 的 UTF-8 中文路径会解坏 → 上传成乱码路径
+    enc = {} if binary else {"encoding": "utf-8", "errors": "replace"}
+    r = subprocess.run(cmd, capture_output=True, text=not binary, input=input_text, **enc)
     if r.returncode != 0:
         raise SystemExit("命令失败: %s\n%s" % (" ".join(cmd), r.stderr))
     return r.stdout
@@ -200,7 +203,11 @@ def main():
         tree_sha = git("rev-parse", "%s^{tree}" % csha).strip()
 
         entries = []
-        for line in git("ls-tree", "-r", csha).splitlines():
+        # -z：NUL 分隔且永不加引号——默认模式会把中文等非 ASCII 路径
+        # 显示成带引号的八进制转义串（"docs/\345...），当字面路径上传就炸 tree
+        for line in git("ls-tree", "-r", "-z", csha).split("\0"):
+            if not line:
+                continue
             meta, path = line.split("\t", 1)
             mode, _type, sha = meta.split()
             entries.append((path, mode, sha))
