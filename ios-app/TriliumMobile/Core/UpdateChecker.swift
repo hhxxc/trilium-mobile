@@ -76,13 +76,16 @@ enum UpdateChecker {
 
             guard let (data, resp) = try? await URLSession.shared.data(for: req),
                   let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+                AppLogger.shared.log("更新源失败: \(urlStr.prefix(60))")
                 continue
             }
             // 直接按 JSON 解码；若被劫持成 HTML 会解码失败 → 换下一个源
             guard let m = try? JSONDecoder().decode(Manifest.self, from: data),
                   let v = m.version, isSemanticVersion(normalizeVersion(v)) else {
+                AppLogger.shared.log("更新源响应无效: \(urlStr.prefix(60)) \(data.count)字节")
                 continue
             }
+            AppLogger.shared.log("更新源命中: \(urlStr.prefix(60)) → v\(v)")
             return LatestInfo(
                 version: normalizeVersion(v),
                 releaseURL: m.releaseUrl.flatMap { URL(string: $0) },
@@ -226,8 +229,9 @@ final class IPAFileDownloader: NSObject, URLSessionDownloadDelegate {
         self.destination = destination
 
         let cfg = URLSessionConfiguration.ephemeral
-        cfg.timeoutIntervalForRequest = 30
-        cfg.timeoutIntervalForResource = 300
+        cfg.timeoutIntervalForRequest = 20
+        // IPA 仅 ~320KB，正常几秒完成；90s 总超时足够，避免坏源挂太久卡「下载中 0 KB」
+        cfg.timeoutIntervalForResource = 90
         let session = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
 
@@ -346,8 +350,10 @@ final class UpdateStore: ObservableObject {
         downloadTaskRef?.cancel()
         currentDownloadVersion = latest
         downloadState = .downloading(received: 0, total: nil)
+        AppLogger.shared.log("更新下载开始: v\(latest)")
 
         let candidates = UpdateChecker.downloadCandidates(ipaURL: ipaURL)
+        AppLogger.shared.log("下载源(\(candidates.count)个): \(candidates.map { $0.host }.joined(separator: ", "))")
         let destination = IPAFileDownloader.destinationURL(version: latest)
         let downloader = IPAFileDownloader { [weak self] received, total in
             Task { @MainActor in
@@ -363,17 +369,21 @@ final class UpdateStore: ObservableObject {
             var lastError: Error = IPAFileDownloader.DownloadError(message: "未知错误")
             for candidate in candidates {
                 if Task.isCancelled { return }
+                AppLogger.shared.log("尝试下载源: \(candidate.absoluteString.prefix(80))")
                 do {
                     let fileURL = try await downloader.download(from: candidate, to: destination)
                     guard !Task.isCancelled else { return }
+                    AppLogger.shared.log("更新下载完成: v\(latest)")
                     self?.downloadState = .downloaded(fileURL: fileURL)
                     return
                 } catch {
                     if Task.isCancelled { return }
+                    AppLogger.shared.log("下载源失败: \(candidate.host) \(error.localizedDescription)")
                     lastError = error
                 }
             }
             guard !Task.isCancelled else { return }
+            AppLogger.shared.log("更新下载最终失败: \(lastError.localizedDescription)")
             self?.downloadState = .failed(message: "\(lastError.localizedDescription)（已尝试全部 \(candidates.count) 个下载源）")
         }
     }

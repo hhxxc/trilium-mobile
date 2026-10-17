@@ -31,8 +31,10 @@ struct ETAPIClient {
 
     private let session: URLSession = {
         let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 20
-        cfg.timeoutIntervalForResource = 60
+        cfg.timeoutIntervalForRequest = 30   // 空闲超时（两次数据间隔）
+        // ⚠️ 资源总时长上限：60s 实测不够——大附件走 ddnsto 慢隧道必然超时
+        //   （日志铁证 "The request timed out"）。给 10 分钟，小请求几秒完成不受影响。
+        cfg.timeoutIntervalForResource = 600
         return URLSession(configuration: cfg)
     }()
 

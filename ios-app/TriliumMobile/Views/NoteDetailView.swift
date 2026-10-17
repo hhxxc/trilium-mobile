@@ -222,7 +222,7 @@ struct NoteDetailView: View {
                     Task { @MainActor in self.fileProgress = Double(received) / Double(total) }
                 }
             }
-            try data.write(to: url)
+            try data.write(to: url, options: .atomic) // 原子写，防中断留半截文件被误判为缓存
             NoteCache.shared.saveBlob(note.noteId, data: data)
             fileDownloading = false
             previewURL = url
