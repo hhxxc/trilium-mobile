@@ -466,20 +466,26 @@ struct NoteRow: View {
     }
 }
 
-/// 速记弹窗：输入一句话存到收件箱
+/// 速记弹窗：输入一句话存到收件箱。
+/// 「打开即写」——弹出立刻聚焦键盘（学 flomo：从打开到落笔不超过两步）
 struct ComposeView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
     @State private var busy = false
     @State private var errorMsg = ""
+    @FocusState private var inputFocused: Bool
     var onSaved: () async -> Void
 
     var body: some View {
         NavigationView {
             VStack(alignment: .leading, spacing: 12) {
+                // ⚠️ iOS 15 兼容：不能用 TextField(axis:)/lineLimit(1...8)（iOS 16 API）
                 TextField("记点什么…（存入收件箱）", text: $text)
                     .textFieldStyle(.roundedBorder)
                     .font(.body)
+                    .focused($inputFocused)
+                    .submitLabel(.done)
+                    .onSubmit { if !text.trimmingCharacters(in: .whitespaces).isEmpty { save() } }
                 if !errorMsg.isEmpty {
                     Text(errorMsg).font(.footnote).foregroundColor(.red)
                 }
@@ -495,6 +501,12 @@ struct ComposeView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") { save() }
                         .disabled(busy || text.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .onAppear {
+                // 立刻聚焦（等 sheet 动画起来一点再聚焦，否则键盘弹不出来）
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    inputFocused = true
                 }
             }
         }

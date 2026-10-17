@@ -93,14 +93,39 @@ struct TreeView: View {
     }
 }
 
+/// 树节点展开状态持久化：记住展开过的目录，下次进来直接还原
+/// （深目录用户最需要——每次进 App 重新点开三层文件夹很烦）
+enum TreeExpandedStore {
+    private static let key = "trilium.treeExpandedIds"
+
+    static func load() -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+    }
+
+    static func set(_ noteId: String, expanded: Bool) {
+        var s = load()
+        if expanded { s.insert(noteId) } else { s.remove(noteId) }
+        // 上限 200 条，防无限增长
+        let arr = Array(s.prefix(200))
+        UserDefaults.standard.set(arr, forKey: key)
+    }
+}
+
 /// 单个树节点：递归渲染。有子笔记 → 展开箭头 + 子节点；叶子 → 点击进阅读页。
 struct TreeNodeView: View {
     let note: Note
     let depth: Int
 
-    @State private var isExpanded = false
+    @State private var isExpanded: Bool
     @State private var children: [Note]? = nil
     @State private var isLoadingChildren = false
+
+    init(note: Note, depth: Int) {
+        self.note = note
+        self.depth = depth
+        // 还原上次的展开状态
+        _isExpanded = State(initialValue: TreeExpandedStore.load().contains(note.noteId))
+    }
 
     /// 是否有子笔记（getNote 补全的 childNoteIds 为准）
     private var hasChildren: Bool {
@@ -125,6 +150,10 @@ struct TreeNodeView: View {
                 }
             }
         }
+        .task {
+            // 进入时若已展开（状态还原），补拉子级
+            if isExpanded && children == nil { await loadChildren() }
+        }
     }
 
     private var leadingPadding: CGFloat {
@@ -139,17 +168,19 @@ struct TreeNodeView: View {
                     toggleExpand()
                 } label: {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(.secondary)
-                        .frame(width: 20, height: 20)
+                        .frame(width: 26, height: 26) // 26pt 热区，防误触
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             } else {
-                Spacer().frame(width: 20)
+                Spacer().frame(width: 26)
             }
 
             // 图标
             Image(systemName: NoteRow.icon(for: note.type))
+                .font(.system(size: 16))
                 .foregroundColor(NoteRow.iconColor(for: note.type))
                 .frame(width: 22)
 
@@ -159,7 +190,7 @@ struct TreeNodeView: View {
                     toggleExpand()
                 } label: {
                     Text(note.title.isEmpty ? "（无标题）" : note.title)
-                        .font(.body)
+                        .font(.system(size: 15.5))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                     Spacer()
@@ -168,7 +199,7 @@ struct TreeNodeView: View {
             } else {
                 NavigationLink(destination: NoteDetailView(note: note)) {
                     Text(note.title.isEmpty ? "（无标题）" : note.title)
-                        .font(.body)
+                        .font(.system(size: 15.5))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                     Spacer()
@@ -177,16 +208,18 @@ struct TreeNodeView: View {
         }
         .padding(.leading, leadingPadding)
         .padding(.trailing, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 12)
         .contentShape(Rectangle())
     }
 
     private func toggleExpand() {
         if isExpanded {
             isExpanded = false
+            TreeExpandedStore.set(note.noteId, expanded: false)
             return
         }
         isExpanded = true
+        TreeExpandedStore.set(note.noteId, expanded: true)
         if children == nil {
             Task { await loadChildren() }
         }
