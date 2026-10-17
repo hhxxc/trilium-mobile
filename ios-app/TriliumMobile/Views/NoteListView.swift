@@ -16,6 +16,8 @@ struct NoteListView: View {
     @State private var loadGeneration = 0
     /// 首页模式：0=最近列表，1=树状目录
     @State private var browseMode = 0
+    /// 搜索历史（最近 8 条，UserDefaults 持久化）；搜索无结果时给出可点词条
+    @State private var searchHistory: [String] = []
 
     private var isSearching: Bool {
         !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
@@ -60,6 +62,9 @@ struct NoteListView: View {
             await load()
         }
         .refreshable { await load() }
+        .onAppear {
+            searchHistory = UserDefaults.standard.stringArray(forKey: "trilium.searchHistory") ?? []
+        }
         .sheet(isPresented: $showCompose) {
             ComposeView(onSaved: { await load() })
         }
@@ -93,7 +98,24 @@ struct NoteListView: View {
                     .font(.system(size: 40)).foregroundColor(.secondary)
                 Text(isSearching ? "未找到相关笔记" : "没有笔记")
                     .font(.footnote).foregroundColor(.secondary)
-                Button(isSearching ? "换个关键词试试" : "刷新试试") { Task { await load() } }
+                // 搜索无结果：给历史词条，点击直接换词重搜（比干巴巴的提示有用）
+                if isSearching && !searchHistory.isEmpty {
+                    VStack(spacing: 8) {
+                        Text("试试最近搜过的：").font(.caption).foregroundColor(.secondary)
+                        ForEach(searchHistory.prefix(4), id: \.self) { term in
+                            Button {
+                                searchQuery = term
+                            } label: {
+                                Text(term)
+                                    .font(.footnote)
+                                    .foregroundColor(Color(red: 0.17, green: 0.61, blue: 0.56))
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                } else if !isSearching {
+                    Button("刷新试试") { Task { await load() } }
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -178,6 +200,9 @@ struct NoteListView: View {
             // 已有更新的加载在进行中：丢弃本批结果（loading/notes 由最新调用收尾）
             guard gen == loadGeneration else { return }
             notes = result
+            if !q.isEmpty && !result.isEmpty {
+                recordSearch(q)
+            }
             AppLogger.shared.log("列表加载完成：\(result.count) 条")
             errorMsg = ""
         } catch {
@@ -192,6 +217,16 @@ struct NoteListView: View {
             }
         }
         loading = false
+    }
+
+    /// 记录搜索历史：去重置顶、最多 8 条、UserDefaults 持久化
+    private func recordSearch(_ term: String) {
+        var list = UserDefaults.standard.stringArray(forKey: "trilium.searchHistory") ?? []
+        list.removeAll { $0 == term }
+        list.insert(term, at: 0)
+        if list.count > 8 { list = Array(list.prefix(8)) }
+        UserDefaults.standard.set(list, forKey: "trilium.searchHistory")
+        searchHistory = list
     }
 
     /// 删除笔记：服务端 DELETE → 清本地缓存 → 从列表移除（无需整页重载）
