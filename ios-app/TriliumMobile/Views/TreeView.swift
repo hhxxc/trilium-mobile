@@ -12,20 +12,27 @@ struct TreeView: View {
     @State private var errorMsg = ""
 
     var body: some View {
-        if embedded {
-            treeBody
-        } else {
-            NavigationView {
+        Group {
+            if embedded {
                 treeBody
-                    .navigationTitle("目录")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            Button("完成") { dismiss() }
+            } else {
+                NavigationView {
+                    treeBody
+                        .navigationTitle("目录")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .navigationBarTrailing) {
+                                Button("完成") { dismiss() }
+                            }
                         }
-                    }
+                }
+                .navigationViewStyle(.stack)
             }
-            .navigationViewStyle(.stack)
+        }
+        // ⚠️ 必须在最外层挂 task：v1.2.3 重写时漏了这行 → loading 永远 true，
+        //   界面永久「加载目录…」（连超时都不触发，因为请求根本没发起）。实测踩坑。
+        .task {
+            if rootChildren.isEmpty { await loadRoot() }
         }
     }
 
