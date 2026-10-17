@@ -176,6 +176,78 @@ struct ETAPIClient {
         _ = try await raw("/etapi/notes/\(id)", method: "DELETE")
     }
 
+    // MARK: - 整理：收藏 / 克隆 / 移动
+    //
+    // 能力来源（读容器内 v0.106 实际路由代码确认，不是猜的）：
+    //   POST /etapi/attributes(/:id)   → 收藏 = 打一个 label
+    //   POST /etapi/branches           → 分支（父子挂载）= 克隆
+    //   DELETE /etapi/branches/:id     → 摘掉某条挂载 = 移动的一半
+    //   PATCH /etapi/branches/:id      → 只接受 notePosition/prefix/isExpanded，
+    //                                    **改不了 parentNoteId** → 移动必须「先挂后摘」两步
+
+    /// 新建属性（收藏 = 给笔记打一个 bookmarked 标签）
+    @discardableResult
+    func createAttribute(noteId: String, name: String, value: String = "",
+                         type: String = "label") async throws -> Attribute {
+        let dict: [String: Any] = ["noteId": noteId, "type": type, "name": name,
+                                   "value": value, "isInheritable": false, "position": 0]
+        let body = try JSONSerialization.data(withJSONObject: dict)
+        let data = try await raw("/etapi/attributes", method: "POST", body: body)
+        return try JSONDecoder().decode(Attribute.self, from: data)
+    }
+
+    func deleteAttribute(_ attributeId: String) async throws {
+        _ = try await raw("/etapi/attributes/\(attributeId)", method: "DELETE")
+    }
+
+    /// 在目标父目录下挂一条分支（= 克隆到另一处；同父级重复调用只是重置位置）
+    @discardableResult
+    func addBranch(noteId: String, parentNoteId: String, position: Int = 0) async throws -> Branch {
+        let dict: [String: Any] = ["noteId": noteId, "parentNoteId": parentNoteId,
+                                   "notePosition": position, "isExpanded": false]
+        let body = try JSONSerialization.data(withJSONObject: dict)
+        let data = try await raw("/etapi/branches", method: "POST", body: body)
+        return try JSONDecoder().decode(Branch.self, from: data)
+    }
+
+    func deleteBranch(_ branchId: String) async throws {
+        _ = try await raw("/etapi/branches/\(branchId)", method: "DELETE")
+    }
+
+    func getBranch(_ branchId: String) async throws -> Branch {
+        try await getJSON("/etapi/branches/\(branchId)")
+    }
+
+    /// 移动笔记：先在目标父级挂分支，再摘掉原父级的分支。
+    /// ⚠️ 顺序不能反——先摘会让笔记短暂成为孤儿（万一第二步失败就找不回来了）。
+    func moveNote(_ noteId: String, from parentNoteId: String, to targetParentId: String) async throws {
+        guard parentNoteId != targetParentId else { return }
+        let note = try await getNote(noteId)
+        let branchIds = note.parentBranchIds ?? []
+        // 用 branch 详情核对父级：parentNoteIds / parentBranchIds 的顺序不保证一一对应
+        var oldBranchId: String?
+        for bid in branchIds {
+            if let b = try? await getBranch(bid), b.parentNoteId == parentNoteId {
+                oldBranchId = bid
+                break
+            }
+        }
+        if oldBranchId == nil, branchIds.count == 1 { oldBranchId = branchIds[0] } // 单父级兜底
+        try await addBranch(noteId: noteId, parentNoteId: targetParentId)
+        if let old = oldBranchId { try await deleteBranch(old) }
+    }
+
+    /// 收藏列表。主路径是 Trilium 的标签搜索语法 `#label`；
+    /// 万一该语法在当前版本不生效，退回「最近 200 条里按 attributes 过滤」——
+    /// 两条都失败也不至于把收藏页做成永久空白。
+    func bookmarkedNotes(limit: Int = 50) async throws -> [Note] {
+        if let r = try? await searchNotes("#bookmarked", limit: limit), !r.isEmpty {
+            return r
+        }
+        let recent = try await recentNotes(limit: 200)
+        return recent.filter { $0.isBookmarked }
+    }
+
     func createNote(parentNoteId: String, title: String, content: String = "", type: String = "text") async throws -> CreateNoteResponse {
         var dict: [String: Any] = ["parentNoteId": parentNoteId, "title": title, "type": type]
         if type == "text" { dict["mime"] = "text/html" }

@@ -78,6 +78,15 @@ struct Attribute: Codable, Equatable {
     let isInheritable: Bool?
 }
 
+extension Note {
+    /// 收藏标记的 attributeId（收藏 = 一条 name 为 bookmarked 的 label）
+    var bookmarkAttributeId: String? {
+        attributes?.first { $0.type == "label" && $0.name == "bookmarked" }?.attributeId
+    }
+
+    var isBookmarked: Bool { bookmarkAttributeId != nil }
+}
+
 /// ETAPI 搜索响应（TriliumNext v0.106 起合并进 GET /etapi/notes?search=…）
 struct SearchResponse: Codable {
     let results: [Note]?

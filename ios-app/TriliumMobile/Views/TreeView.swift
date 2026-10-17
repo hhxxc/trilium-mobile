@@ -118,6 +118,15 @@ enum TreeExpandedStore {
     }
 }
 
+/// 树行按钮样式：按下即高亮（SwiftUI 默认 plain 样式没有任何按压反馈，
+/// 点了看不出有没有反应，也是「不跟手」的一部分）
+struct TreeRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? Color(UIColor.systemGray5) : Color.clear)
+    }
+}
+
 /// 单个树节点：递归渲染。有子笔记 → 展开箭头 + 子节点；叶子 → 点击进阅读页。
 struct TreeNodeView: View {
     let note: Note
@@ -164,58 +173,48 @@ struct TreeNodeView: View {
     }
 
     private var leadingPadding: CGFloat {
-        16 + CGFloat(depth) * 20
+        10 + CGFloat(depth) * 18
     }
 
+    /// 整行一个可点区域（⚠️ 旧版只有「箭头按钮 + 标题文字」能点，右侧空白点不动，
+    /// 用户体感就是「点击不跟手」）。现在箭头/图标/标题/空白合并成同一行按钮，
+    /// 容器行 = 展开收起，叶子行 = 进阅读页；配合按下高亮给出即时反馈。
     private var nodeRow: some View {
-        HStack(spacing: 8) {
-            // 展开箭头 / 占位（叶子无箭头，但保留对齐）
+        Group {
             if hasChildren {
-                Button {
-                    toggleExpand()
-                } label: {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .frame(width: 26, height: 26) // 26pt 热区，防误触
-                        .contentShape(Rectangle())
+                Button(action: toggleExpand) {
+                    rowContent(showArrow: true)
                 }
-                .buttonStyle(.plain)
-            } else {
-                Spacer().frame(width: 26)
-            }
-
-            // 图标
-            Image(systemName: NoteRow.icon(for: note.type))
-                .font(.system(size: 16))
-                .foregroundColor(NoteRow.iconColor(for: note.type))
-                .frame(width: 22)
-
-            // 标题：容器点击切换展开；叶子点击进阅读页
-            if hasChildren {
-                Button {
-                    toggleExpand()
-                } label: {
-                    Text(note.title.isEmpty ? "（无标题）" : note.title)
-                        .font(.system(size: 15.5))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    Spacer()
-                }
-                .buttonStyle(.plain)
+                .buttonStyle(TreeRowButtonStyle())
             } else {
                 NavigationLink(destination: NoteDetailView(note: note)) {
-                    Text(note.title.isEmpty ? "（无标题）" : note.title)
-                        .font(.system(size: 15.5))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    Spacer()
+                    rowContent(showArrow: false)
                 }
+                .buttonStyle(TreeRowButtonStyle())
             }
+        }
+    }
+
+    private func rowContent(showArrow: Bool) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(Color(UIColor.tertiaryLabel))
+                .frame(width: 16)
+                .opacity(showArrow ? 1 : 0)
+
+            NoteIconBadge(type: note.type, size: 26)
+
+            Text(note.title.isEmpty ? "（无标题）" : note.title)
+                .font(.system(size: 15.5))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
         }
         .padding(.leading, leadingPadding)
         .padding(.trailing, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
     }
 

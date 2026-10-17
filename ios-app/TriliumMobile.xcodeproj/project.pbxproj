@@ -16,6 +16,7 @@
 		e706478840875ca393505001 /* Note.swift in Sources */ = {isa = PBXBuildFile; fileRef = 307a633e02d35e8bb8847ca5 /* Note.swift */; };
 		9178660f67835b6b8297699f /* TriliumMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9b61e7545c11570aae0dea94 /* TriliumMobileApp.swift */; };
 		34212d0b4c335370894bef8d /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 303541daab6e555698347606 /* LoginView.swift */; };
+		b71de94d07a551b28c1d91e7 /* MoveTargetPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = ee45a003fcd9548cac25d986 /* MoveTargetPicker.swift */; };
 		2e081f2622575cfa9b6c0ad3 /* NoteDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = a646ffa6ff8e5638b83e6ef9 /* NoteDetailView.swift */; };
 		51268afbebb2504d8f7b32b2 /* NoteListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33623529312c5deb98cddaeb /* NoteListView.swift */; };
 		88ee5fa9790f5838bb320801 /* QuickLookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = c48c0896a7d85cf4bbcb85d3 /* QuickLookView.swift */; };
@@ -62,6 +63,7 @@
 		307a633e02d35e8bb8847ca5 /* Note.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Note.swift; sourceTree = "<group>"; };
 		9b61e7545c11570aae0dea94 /* TriliumMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriliumMobileApp.swift; sourceTree = "<group>"; };
 		303541daab6e555698347606 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/LoginView.swift; sourceTree = "<group>"; };
+		ee45a003fcd9548cac25d986 /* MoveTargetPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/MoveTargetPicker.swift; sourceTree = "<group>"; };
 		a646ffa6ff8e5638b83e6ef9 /* NoteDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/NoteDetailView.swift; sourceTree = "<group>"; };
 		33623529312c5deb98cddaeb /* NoteListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/NoteListView.swift; sourceTree = "<group>"; };
 		c48c0896a7d85cf4bbcb85d3 /* QuickLookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/QuickLookView.swift; sourceTree = "<group>"; };
@@ -98,6 +100,7 @@
 				307a633e02d35e8bb8847ca5 /* Note.swift */,
 				9b61e7545c11570aae0dea94 /* TriliumMobileApp.swift */,
 				303541daab6e555698347606 /* LoginView.swift */,
+				ee45a003fcd9548cac25d986 /* MoveTargetPicker.swift */,
 				a646ffa6ff8e5638b83e6ef9 /* NoteDetailView.swift */,
 				33623529312c5deb98cddaeb /* NoteListView.swift */,
 				c48c0896a7d85cf4bbcb85d3 /* QuickLookView.swift */,
@@ -237,6 +240,7 @@
 				e706478840875ca393505001 /* Note.swift in Sources */,
 				9178660f67835b6b8297699f /* TriliumMobileApp.swift in Sources */,
 				34212d0b4c335370894bef8d /* LoginView.swift in Sources */,
+				b71de94d07a551b28c1d91e7 /* MoveTargetPicker.swift in Sources */,
 				2e081f2622575cfa9b6c0ad3 /* NoteDetailView.swift in Sources */,
 				51268afbebb2504d8f7b32b2 /* NoteListView.swift in Sources */,
 				88ee5fa9790f5838bb320801 /* QuickLookView.swift in Sources */,
