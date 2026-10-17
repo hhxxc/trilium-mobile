@@ -15,6 +15,11 @@ struct NoteDetailView: View {
     @State private var errorMsg = ""
     @State private var showEditor = false
     @State private var shareURL: URL?
+    // 附件预览状态
+    @State private var fileDownloading = false
+    @State private var fileProgress: Double = 0
+    @State private var previewURL: URL?
+    @State private var fileErrorMsg = ""
     /// 编辑改标题后的最新标题（note 是 let，PATCH 后靠这里刷新显示）
     @State private var freshTitle: String = ""
     @State private var freshType: String = ""

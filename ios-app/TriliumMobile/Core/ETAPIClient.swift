@@ -144,11 +144,11 @@ struct ETAPIClient {
             data.append(byte)
             sinceReport += 1
             if sinceReport >= 64 * 1024 {
-                onProgress(data.count, total.map(Int64.init))
+                onProgress(Int64(data.count), total)
                 sinceReport = 0
             }
         }
-        onProgress(data.count, total.map(Int64.init))
+        onProgress(Int64(data.count), total)
         return data
     }
 
