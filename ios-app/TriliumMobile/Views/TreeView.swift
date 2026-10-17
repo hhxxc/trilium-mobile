@@ -1,7 +1,10 @@
 import SwiftUI
 
-/// 笔记树：面包屑层级浏览（从 root 逐层展开），作为 sheet 弹出。
+/// 笔记树：面包屑层级浏览（从 root 逐层展开）。
+/// sheet 弹出（右上角入口）与内嵌（首页「目录」模式）共用本视图。
 struct TreeView: View {
+    /// true = 嵌在主界面里（无 NavigationView/完成按钮，用顶部面包屑导航）
+    var embedded: Bool = false
     @Environment(\.dismiss) private var dismiss
     @State private var stack: [(id: String, title: String)] = [("root", "根目录")]
     @State private var children: [Note] = []
@@ -12,40 +15,89 @@ struct TreeView: View {
     @State private var layerCache: [String: [Note]] = [:]
 
     var body: some View {
-        NavigationView {
-            Group {
-                if loading && children.isEmpty {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if !errorMsg.isEmpty && children.isEmpty {
-                    VStack(spacing: 12) {
-                        Text(errorMsg).font(.footnote).foregroundColor(.secondary)
-                        Button("重试") { Task { await loadCurrent() } }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(children) { note in
-                            row(for: note)
-                        }
-                    }
-                    .listStyle(.plain)
-                }
-            }
-            .navigationTitle(stack.last?.title ?? "笔记")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    if stack.count > 1 {
-                        Button("返回") { goUp() }
-                    }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("完成") { dismiss() }
-                }
-            }
-            .task { await loadCurrent() }
+        if embedded {
+            embeddedBody
+        } else {
+            NavigationView { sheetBody }
+                .navigationViewStyle(.stack)
         }
-        .navigationViewStyle(.stack)
+    }
+
+    /// 内嵌模式：顶部面包屑（点击任意层级跳回）+ 列表
+    private var embeddedBody: some View {
+        VStack(spacing: 0) {
+            breadcrumb
+            treeContent
+        }
+        .task { await loadCurrent() }
+    }
+
+    /// 面包屑条：根目录 / A / B
+    private var breadcrumb: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                // ⚠️ id 用 \.offset：stack 是 tuple 数组，keypath 不支持 tuple 元素（编译炸）
+                ForEach(Array(stack.enumerated()), id: \.offset) { i, item in
+                    if i > 0 {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                    Button {
+                        if i < stack.count - 1 {
+                            stack.removeLast(stack.count - 1 - i)
+                            Task { await loadCurrent() }
+                        }
+                    } label: {
+                        Text(item.title.isEmpty ? "（无标题）" : item.title)
+                            .font(.footnote.weight(i == stack.count - 1 ? .semibold : .regular))
+                            .foregroundColor(i == stack.count - 1 ? .primary : Color(red: 0.17, green: 0.61, blue: 0.56))
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .background(Color(UIColor.secondarySystemGroupedBackground))
+    }
+
+    private var sheetBody: some View {
+        Group {
+            treeContent
+        }
+        .navigationTitle(stack.last?.title ?? "笔记")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                if stack.count > 1 {
+                    Button("返回") { goUp() }
+                }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("完成") { dismiss() }
+            }
+        }
+        .task { await loadCurrent() }
+    }
+
+    @ViewBuilder
+    private var treeContent: some View {
+        if loading && children.isEmpty {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if !errorMsg.isEmpty && children.isEmpty {
+            VStack(spacing: 12) {
+                Text(errorMsg).font(.footnote).foregroundColor(.secondary)
+                Button("重试") { Task { await loadCurrent() } }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List {
+                ForEach(children) { note in
+                    row(for: note)
+                }
+            }
+            .listStyle(.plain)
+        }
     }
 
     /// 可展开的「容器」：复用 Note.isContainer 的类型判断，另加「有子笔记」

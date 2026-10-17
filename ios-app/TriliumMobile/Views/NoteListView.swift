@@ -2,6 +2,7 @@ import SwiftUI
 
 /// 首页：笔记列表（有道云风格，列表优先）。
 /// 大标题 + 搜索入口 + 笔记列表（标题/时间分组），右下角悬浮「+」速记。
+/// 顶部「最近 | 目录」切换：目录模式内嵌树状浏览（面包屑导航）。
 struct NoteListView: View {
     @State private var notes: [Note] = []
     @State private var loading = false
@@ -12,6 +13,8 @@ struct NoteListView: View {
     @State private var deleting = false
     /// 加载代数：并发触发 load（防抖任务 + 下拉刷新）时丢弃过期响应，防旧结果覆盖新结果
     @State private var loadGeneration = 0
+    /// 首页模式：0=最近列表，1=树状目录
+    @State private var browseMode = 0
 
     private var isSearching: Bool {
         !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
@@ -19,12 +22,30 @@ struct NoteListView: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            content
+            Group {
+                if isSearching || browseMode == 0 {
+                    content
+                } else {
+                    TreeView(embedded: true)
+                }
+            }
             composeButton
         }
-        .navigationTitle("笔记")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationTitle(isSearching ? "搜索" : (browseMode == 0 ? "最近" : "目录"))
+        .navigationBarTitleDisplayMode(isSearching ? .inline : .large)
+        // 目录模式没有搜索框；最近/搜索才有
         .searchable(text: $searchQuery, prompt: "搜索笔记")
+        .toolbar {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                // 树状目录入口改为顶部固定入口
+                Picker("视图", selection: $browseMode) {
+                    Image(systemName: "clock").tag(0)
+                    Image(systemName: "folder").tag(1)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 110)
+            }
+        }
         // 防抖实时搜索：query 变化后停 400ms 才发请求，连续输入不轰服务端；
         // 旧任务会被自动取消（结构化并发），旧请求不会抢跑
         .task(id: searchQuery) {

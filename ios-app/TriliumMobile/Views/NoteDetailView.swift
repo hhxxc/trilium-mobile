@@ -146,14 +146,74 @@ struct NoteDetailView: View {
                 .font(.system(size: 48)).foregroundColor(.blue)
             Text(note.title)
                 .font(.headline)
+                .multilineTextAlignment(.center)
             Text("附件类型（\(note.mime ?? "未知")）")
                 .font(.footnote).foregroundColor(.secondary)
-            Text("请在网页端下载或查看此附件")
-                .font(.caption).foregroundColor(.secondary)
+
+            if fileDownloading {
+                VStack(spacing: 8) {
+                    ProgressView(value: fileProgress)
+                        .frame(width: 180)
+                    Text("下载中…").font(.caption).foregroundColor(.secondary)
+                }
+            } else {
+                Button {
+                    Task { await previewFile() }
+                } label: {
+                    Label(previewURL == nil ? "预览附件" : "重新打开", systemImage: "eye")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            if !fileErrorMsg.isEmpty {
+                Text(fileErrorMsg).font(.caption).foregroundColor(.red)
+            }
+
             Link("在网页端打开", destination: AppSettings.shared.serverURL)
-                .buttonStyle(.bordered)
+                .font(.footnote)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: Binding(get: { previewURL != nil },
+                                    set: { if !$0 { previewURL = nil } })) {
+            if let url = previewURL {
+                QuickLookView(fileURL: url)
+                    .ignoresSafeArea(edges: .bottom)
+            }
+        }
+    }
+
+    /// 下载附件到临时文件 → QuickLook 原生预览（PDF/Office/图片通吃）
+    /// 已下载过（本次会话）直接打开；文件名带扩展名，QuickLook 按扩展名选渲染器
+    private func previewFile() async {
+        fileErrorMsg = ""
+        // 1. 临时文件路径（title 作文件名，保留扩展名供 QuickLook 识别格式）
+        var name = note.title.replacingOccurrences(of: "/", with: "_")
+        if name.isEmpty { name = "attachment" }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        // 本次会话已下载过 → 直接预览
+        if FileManager.default.fileExists(atPath: url.path) {
+            previewURL = url
+            return
+        }
+        // 2. 下载（带进度）
+        fileDownloading = true
+        fileProgress = 0
+        do {
+            let data = try await ETAPIClient.shared.getContentData(note.noteId) { received, total in
+                if let total, total > 0 {
+                    Task { @MainActor in self.fileProgress = Double(received) / Double(total) }
+                }
+            }
+            try data.write(to: url)
+            NoteCache.shared.saveBlob(note.noteId, data: data) // 顺手缓存，离线可再开
+            fileDownloading = false
+            previewURL = url
+            AppLogger.shared.log("附件下载完成: \(name) \(data.count)字节")
+        } catch {
+            fileDownloading = false
+            fileErrorMsg = "下载失败：\(error.localizedDescription)"
+            AppLogger.shared.log("附件下载失败[\(note.title)]: \(error.localizedDescription)")
+        }
     }
 
     private func fallback(typeName: String, icon: String) -> some View {

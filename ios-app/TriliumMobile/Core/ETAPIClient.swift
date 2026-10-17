@@ -120,6 +120,38 @@ struct ETAPIClient {
         try await raw("/etapi/notes/\(id)/content")
     }
 
+    /// 二进制内容 + 下载进度回调（附件预览用；逐块读取，每 64KB 上报一次）
+    func getContentData(_ id: String, onProgress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> Data {
+        guard var comp = URLComponents(url: baseURL.appendingPathComponent("/etapi/notes/\(id)/content"),
+                                       resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidURL
+        }
+        comp.query = nil
+        guard let url = comp.url else { throw APIError.invalidURL }
+
+        var req = URLRequest(url: url)
+        req.setValue(token, forHTTPHeaderField: "Authorization")
+
+        let (bytes, resp) = try await session.bytes(for: req)
+        let total = (resp as? HTTPURLResponse).flatMap {
+            $0.expectedContentLength > 0 ? $0.expectedContentLength : nil
+        }
+
+        var data = Data()
+        data.reserveCapacity(total.map(Int.init) ?? 64 * 1024)
+        var sinceReport: Int64 = 0
+        for try await byte in bytes {
+            data.append(byte)
+            sinceReport += 1
+            if sinceReport >= 64 * 1024 {
+                onProgress(data.count, total.map(Int64.init))
+                sinceReport = 0
+            }
+        }
+        onProgress(data.count, total.map(Int64.init))
+        return data
+    }
+
     /// 附件下载（笔记的 attachment，如 file 笔记的附件内容）
     func getAttachmentContent(_ attachmentId: String) async throws -> Data {
         try await raw("/etapi/attachments/\(attachmentId)/content")
