@@ -70,11 +70,15 @@ jobs:
             || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $V" "$PLIST"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $B" "$PLIST" \
             || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $B" "$PLIST"
-          echo "==> App 版本注入为 $V ($B)"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST"
+          # 分享扩展的版本必须与宿主一致（不一致构建警告， TrollStore 重签也可能挑剔）
+          SPLIST="ShareExtension/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $V" "$SPLIST" \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $V" "$SPLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $B" "$SPLIST" \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $B" "$SPLIST"
           sed -i '' "s/MARKETING_VERSION = [0-9.]*;/MARKETING_VERSION = $V;/g" TriliumMobile.xcodeproj/project.pbxproj
           sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*;/CURRENT_PROJECT_VERSION = $B;/g" TriliumMobile.xcodeproj/project.pbxproj
+          echo "==> App 版本注入为 $V ($B)（含分享扩展）"
 
       - name: Generate App Icons
         run: |
@@ -124,10 +128,10 @@ jobs:
           APP="build/dd/Build/Products/Release-iphoneos/TriliumMobile.app"
           mkdir -p Payload
           cp -r "$APP" Payload/
-          # --deep：连 PlugIns/ShareExtension.appex 一起签（先内后外）
+          # --deep：连 PlugIns 里的扩展一起签（先内后外）
           codesign --force --deep --sign - --entitlements TriliumMobile/TriliumMobile.entitlements Payload/TriliumMobile.app
-          # appex 产物名 = target 名（ShareExtension），不是 productName
-          test -d Payload/TriliumMobile.app/PlugIns/ShareExtension.appex || { echo "::error::分享扩展未嵌入"; exit 1; }
+          # appex 产物名历史上出现过两种（ShareExtension/TriliumShare），通配校验
+          ls Payload/TriliumMobile.app/PlugIns/*.appex >/dev/null 2>&1 || { echo "::error::分享扩展未嵌入"; exit 1; }
           rm -rf build/dd
           zip -r "$IPA_NAME" Payload
           rm -rf Payload
