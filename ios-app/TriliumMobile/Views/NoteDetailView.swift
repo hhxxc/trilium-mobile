@@ -205,6 +205,11 @@ struct NoteDetailView: View {
             await load()
             await loadSiblings()
         }
+        // 阅读页出现即广播：首页收到后收起抽屉。
+        // 抽屉是 ZStack 覆盖层（不在导航栈里），从树里 push 阅读页时它不会自己消失。
+        .onAppear {
+            NotificationCenter.default.post(name: .noteDetailAppeared, object: nil)
+        }
     }
 
     private func openLinkedNote(_ noteId: String) {
@@ -511,6 +516,8 @@ struct NativeEditorView: View {
 extension Notification.Name {
     /// 笔记标题等元数据被修改（编辑器保存后广播，首页列表就地刷新）
     static let noteMetaChanged = Notification.Name("trilium.noteMetaChanged")
+    /// 阅读页出现（从抽屉树点笔记后，首页据此收起抽屉，避免树盖在阅读页上）
+    static let noteDetailAppeared = Notification.Name("trilium.noteDetailAppeared")
 }
 
 /// HTML 包装工具（抽离，供阅读页复用）

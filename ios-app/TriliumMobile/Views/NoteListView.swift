@@ -73,8 +73,13 @@ struct NoteListView: View {
         //   - 放 toolbar 里 iOS 15 不渲染（实测）
         //   - 放顶部横条够不到（思源被骂的第一条就是高频操作在左上角）
         //   底部 safeAreaInset 是 iOS 15 稳定支持，且单手拇指正好够到。
+        // ⚠️ 抽屉打开时必须收起底部工具条：safeAreaInset 的条带渲染在 ZStack 内容**之上**，
+        //   不收起的话抽屉（已经 ignoresSafeArea 铺满）会在底部被工具条压一条，
+        //   而且胶囊/＋按钮还能隔着抽屉点到。收起后抽屉才是真正的全屏覆盖。
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            bottomBar
+            if !drawerOpen {
+                bottomBar
+            }
         }
         // 防抖实时搜索：query 变化后停 400ms 才发请求，连续输入不轰服务端；
         // 旧任务会被自动取消（结构化并发），旧请求不会抢跑
@@ -96,6 +101,13 @@ struct NoteListView: View {
         // 编辑器改了标题：就地刷新列表，返回时看到的不是旧标题
         .onReceive(NotificationCenter.default.publisher(for: .noteMetaChanged)) { _ in
             Task { await load() }
+        }
+        // 从抽屉树点开笔记：导航已经把阅读页 push 上来了，抽屉必须同步收起，
+        // 否则树会一直盖在阅读页上（抽屉是 ZStack 覆盖层，不受导航栈影响）
+        .onReceive(NotificationCenter.default.publisher(for: .noteDetailAppeared)) { _ in
+            if drawerOpen {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { drawerOpen = false }
+            }
         }
         .sheet(isPresented: $showCompose) {
             ComposeView(onSaved: { await load() })
@@ -166,9 +178,11 @@ struct NoteListView: View {
                             Spacer()
                         }
                     }
+                    .listRowSeparator(.hidden)
                 }
                 if !errorMsg.isEmpty {
                     Text(errorMsg).font(.footnote).foregroundColor(.secondary)
+                        .listRowSeparator(.hidden)
                 }
                 if isSearching {
                     // 搜索结果平铺（分组反而碍事）
@@ -178,10 +192,16 @@ struct NoteListView: View {
                 } else {
                     // 浏览模式按时间分组（有道云风格）
                     ForEach(timeGroups.filter { !$0.notes.isEmpty }, id: \.title) { g in
-                        Section(g.title) {
+                        Section {
                             ForEach(g.notes) { note in
                                 listRow(note)
                             }
+                        } header: {
+                            // 分组标题：小号加粗灰字，比 plain 样式默认的全大写大灰条更克制
+                            Text(g.title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.secondary)
+                                .textCase(nil)
                         }
                     }
                 }
@@ -195,6 +215,9 @@ struct NoteListView: View {
         NavigationLink(destination: NoteDetailView(note: note)) {
             NoteRow(note: note)
         }
+        // 系统分隔线贴着行左边缘、从图标左侧开始，和标题文字不对齐，看着很散；
+        // 隐藏它，改由 NoteRow 自己画一条**与标题文字左对齐**的细线（苹果备忘录 / 微信的做法）
+        .listRowSeparator(.hidden)
         .contextMenu {
             Button(role: .destructive) {
                 noteToDelete = note
@@ -241,8 +264,9 @@ struct NoteListView: View {
         }
         .frame(width: w)
         .frame(maxHeight: .infinity)
-        .background(Color(UIColor.systemBackground))
-        .ignoresSafeArea(edges: .bottom)
+        // 背景铺满全屏（含底部安全区），但**内容**仍留在安全区内——
+        // 之前整个 VStack ignoresSafeArea，抽屉最后一两行会压到 Home 指示条下面
+        .background(Color(UIColor.systemBackground).ignoresSafeArea())
         .shadow(color: .black.opacity(0.15), radius: 12, x: 4, y: 0)
     }
 
@@ -406,6 +430,14 @@ struct NoteRow: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 6)
+        // 分隔线自己画：系统分隔线从图标左边起，和标题文字不对齐；
+        // 这里让它从**标题文字左边**开始（图标 26 + 间距 12 = 38），视觉上更整齐、层次更清楚
+        .overlay(alignment: .bottomLeading) {
+            Rectangle()
+                .fill(Color(UIColor.separator))
+                .frame(height: 0.5)
+                .padding(.leading, 38)
+        }
         .onAppear { loadSummaryIfNeeded() }
     }
 
