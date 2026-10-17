@@ -51,13 +51,43 @@ struct TreeView: View {
         }
     }
 
+    private enum LoadOutcome {
+        case ok([Note])
+        case failed(String)
+        case timeout
+    }
+
     private func loadRoot() async {
         loading = true
-        do {
-            rootChildren = try await ETAPIClient.shared.childNotes(of: "root")
-            errorMsg = ""
-        } catch {
-            errorMsg = "加载失败：\(error.localizedDescription)"
+        errorMsg = ""
+        // 请求与 12 秒超时竞速：无论服务端多慢，界面都不会无限转圈
+        let outcome = await withTaskGroup(of: LoadOutcome?.self) { group -> LoadOutcome in
+            group.addTask {
+                do { return .ok(try await ETAPIClient.shared.childNotes(of: "root")) }
+                catch { return .failed(error.localizedDescription) }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 12_000_000_000)
+                return Task.isCancelled ? nil : .timeout
+            }
+            for await r in group {
+                if let r {
+                    group.cancelAll()
+                    return r
+                }
+            }
+            return .timeout
+        }
+        switch outcome {
+        case .ok(let list):
+            rootChildren = list
+            AppLogger.shared.log("目录加载完成：\(list.count) 项")
+        case .failed(let msg):
+            errorMsg = "加载失败：\(msg)"
+            AppLogger.shared.log("目录加载失败: \(msg)")
+        case .timeout:
+            errorMsg = "加载超时，点重试"
+            AppLogger.shared.log("目录加载超时(12s)")
         }
         loading = false
     }
@@ -168,6 +198,7 @@ struct TreeNodeView: View {
             children = try await ETAPIClient.shared.childNotes(of: note.noteId)
         } catch {
             children = []
+            AppLogger.shared.log("展开[\(note.title)]失败: \(error.localizedDescription)")
         }
         isLoadingChildren = false
     }

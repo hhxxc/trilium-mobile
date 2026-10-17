@@ -228,8 +228,11 @@ struct ETAPIClient {
     func childNotes(of parentId: String) async throws -> [Note] {
         let parent = try await getNote(parentId)
         let ids = parent.childNoteIds ?? []
-        guard !ids.isEmpty else { return [] }
-        AppLogger.shared.log("childNotes[\(parentId)]: \(ids.count) 个子笔记")
+        AppLogger.shared.log("childNotes[\(parentId)]: childNoteIds=\(ids.count)")
+        if ids.isEmpty {
+            // 回退：childNoteIds 未填充时，用全量搜索 + notePath 推导层级
+            return try await childrenViaNotePath(of: parentId)
+        }
 
         // 分批并发（每批 6 个），防止大目录瞬间打爆隧道
         var out: [(Int, Note)] = []
@@ -256,6 +259,77 @@ struct ETAPIClient {
             out.append(contentsOf: results)
         }
         return out.sorted { $0.0 < $1.0 }.map(\.1)
+    }
+
+    // MARK: - 树形层级的回退方案（notePath）
+
+    /// noteId → notePath（形如 "root/abc/def"）。全量拉一次后缓存 60s。
+    private static var pathCache: [String: String] = [:]
+    private static var pathCacheTime: Date = .distantPast
+
+    /// childNoteIds 不可用时的回退：全量搜索一次，用 notePath 推导父子关系。
+    /// notePath 是 Trilium 搜索响应的常见附加字段（形如 root/xxx/yyy），
+    /// 父路径 = 去掉最后一段，据此建立 parent→children 映射。
+    private func childrenViaNotePath(of parentId: String) async throws -> [Note] {
+        let now = Date()
+        // 缓存有效则直接算
+        if now.timeIntervalSince(Self.pathCacheTime) < 60, !Self.pathCache.isEmpty {
+            return Self.childrenFromPathCache(of: parentId)
+        }
+
+        // 全量拉（一次请求，limit 放宽）
+        var q = [URLQueryItem(name: "search", value: Self.matchAll)]
+        q.append(URLQueryItem(name: "limit", value: "2000"))
+        q.append(URLQueryItem(name: "orderBy", value: "title"))
+        q.append(URLQueryItem(name: "orderDirection", value: "asc"))
+        let data = try await raw("/etapi/notes", query: q)
+
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = root["results"] as? [[String: Any]] else {
+            AppLogger.shared.log("notePath 回退：响应结构无法解析")
+            throw APIError.invalidResponse
+        }
+        // 诊断：记录一条 note 的字段名（确认服务端到底给了什么）
+        if let first = arr.first {
+            AppLogger.shared.log("note 字段: \(first.keys.sorted().joined(separator: ","))")
+        }
+        // 建立 noteId → notePath
+        var map: [String: String] = [:]
+        for item in arr {
+            guard let nid = item["noteId"] as? String, let path = item["notePath"] as? String else { continue }
+            map[nid] = path
+        }
+        guard !map.isEmpty else {
+            AppLogger.shared.log("notePath 回退：响应不含 notePath 字段")
+            throw APIError.invalidResponse
+        }
+        Self.pathCache = map
+        Self.pathCacheTime = now
+
+        // 解码成 Note（复用同一份 data，避免二次请求）
+        let notes = (try? JSONDecoder().decode(SearchResponse.self, from: data))?.results
+            ?? (try? JSONDecoder().decode([Note].self, from: data)) ?? []
+        // 存下来供 childrenFromPathCache 用
+        Self.noteCacheFromPathFallback = notes
+        return Self.childrenFromPathCache(of: parentId)
+    }
+
+    private static var noteCacheFromPathFallback: [Note] = []
+
+    /// 从 notePath 缓存算直接子级：父路径 == 目标 noteId 所在路径
+    private static func childrenFromPathCache(of parentId: String) -> [Note] {
+        let parentPath = pathCache[parentId] ?? "root"
+        let byId = Dictionary(uniqueKeysWithValues: noteCacheFromPathFallback.map { ($0.noteId, $0) })
+        // 收集直接子级：path 以 "<parentPath>/" 开头且剩余部分不含 "/"
+        var out: [Note] = []
+        for (nid, path) in pathCache {
+            let prefix = parentPath + "/"
+            guard path.hasPrefix(prefix) else { continue }
+            let rest = String(path.dropFirst(prefix.count))
+            if rest.isEmpty || rest.contains("/") { continue } // 孙子或自身
+            if let n = byId[nid] { out.append(n) }
+        }
+        return out.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
     // MARK: - 收件箱
