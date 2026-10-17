@@ -273,7 +273,7 @@ struct NoteDetailView: View {
             Text(note.title)
                 .font(.headline)
                 .multilineTextAlignment(.center)
-            Text("附件类型（\(note.mime ?? "未知")）")
+            Text("\(Self.friendlyKind(note.mime))\(note.mime.map { " · \($0)" } ?? "")")
                 .font(.footnote).foregroundColor(.secondary)
 
             if fileDownloading {
@@ -311,15 +311,30 @@ struct NoteDetailView: View {
     /// 下载附件到稳定缓存目录 → QuickLook 原生预览（PDF/Office/图片通吃）
     /// ⚠️ 缓存必须落在 Caches 而不是 temporaryDirectory：iOS 会随时清临时目录，
     ///   导致「退出回来又重新下载」。已缓存则秒开。
+    /// ⚠️ **必须带正确的扩展名**：QuickLook 靠扩展名判 UTI，没有扩展名的 PDF 只会显示
+    ///   「data / 25.2 MB」的空白页（用户实测「打不开」就是这个）。旧版直接用标题当文件名。
     private func previewFile() async {
         fileErrorMsg = ""
-        var name = note.title.replacingOccurrences(of: "/", with: "_")
-        if name.isEmpty { name = "attachment" }
+        var base = note.title.replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if base.isEmpty { base = "attachment" }
+
         // 稳定缓存目录（跨会话保留）
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("TriliumAttachments", isDirectory: true)
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-        let url = cacheDir.appendingPathComponent(name)
+
+        let ext = Self.fileExtension(mime: note.mime, name: base)
+        let fileName = ext.isEmpty ? base : "\(base).\(ext)"
+        let url = cacheDir.appendingPathComponent(fileName)
+
+        // 兼容旧缓存：以前不带扩展名，QuickLook 认不出来 → 直接改名复用，不重新下 25MB
+        let legacyURL = cacheDir.appendingPathComponent(base)
+        if url != legacyURL, FileManager.default.fileExists(atPath: legacyURL.path),
+           !FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.moveItem(at: legacyURL, to: url)
+        }
 
         // 1. 已缓存 → 秒开
         if FileManager.default.fileExists(atPath: url.path) {
@@ -343,17 +358,80 @@ struct NoteDetailView: View {
                     Task { @MainActor in self.fileProgress = Double(received) / Double(total) }
                 }
             }
-            try data.write(to: url, options: .atomic) // 原子写，防中断留半截文件被误判为缓存
+            // mime 也不认识时，用文件头兜底判断类型（PDF / 图片 / zip 系）
+            var finalURL = url
+            if ext.isEmpty, let sniffed = Self.sniffExtension(data) {
+                finalURL = cacheDir.appendingPathComponent("\(base).\(sniffed)")
+            }
+            try data.write(to: finalURL, options: .atomic) // 原子写，防中断留半截文件被误判为缓存
             NoteCache.shared.saveBlob(note.noteId, data: data)
             fileDownloading = false
-            previewURL = url
-            AppLogger.shared.log("附件下载完成: \(name) \(data.count)字节")
+            previewURL = finalURL
+            AppLogger.shared.log("附件下载完成: \(finalURL.lastPathComponent) \(data.count)字节")
         } catch {
             fileDownloading = false
             fileErrorMsg = "下载失败：\(error.localizedDescription)"
             AppLogger.shared.log("附件下载失败[\(note.title)]: \(error.localizedDescription)")
         }
     }
+
+    /// 文件类型的中文说明（比裸 mime 好读）
+    private static func friendlyKind(_ mime: String?) -> String {
+        guard let m = mime?.lowercased() else { return "附件" }
+        if m.hasPrefix("image/") { return "图片" }
+        if m.hasPrefix("audio/") { return "音频" }
+        if m.hasPrefix("video/") { return "视频" }
+        if m.contains("pdf") { return "PDF 文档" }
+        if m.contains("word") || m.contains("msword") { return "Word 文档" }
+        if m.contains("sheet") || m.contains("excel") { return "Excel 表格" }
+        if m.contains("presentation") || m.contains("powerpoint") { return "PPT 演示" }
+        if m.contains("zip") || m.contains("rar") || m.contains("7z") { return "压缩包" }
+        if m.hasPrefix("text/") { return "文本" }
+        return "附件"
+    }
+
+    /// mime → 扩展名。QuickLook 完全依赖扩展名，这一步不能省。
+    private static func fileExtension(mime: String?, name: String) -> String {
+        if let m = mime?.lowercased() {
+            if let ext = extByMime[m] { return ext }
+            // 形如 image/png; charset=utf-8 之类带参数的
+            if let semi = m.split(separator: ";").first, let ext = extByMime[String(semi)] { return ext }
+        }
+        // 标题里本来就带后缀（用户自己命名的 .pdf 等）
+        let ext = (name as NSString).pathExtension.lowercased()
+        if !ext.isEmpty, ext.count <= 5 { return ext }
+        return ""
+    }
+
+    /// 文件头魔数兜底
+    private static func sniffExtension(_ data: Data) -> String? {
+        let head = [UInt8](data.prefix(8))
+        if head.starts(with: [0x25, 0x50, 0x44, 0x46]) { return "pdf" }   // %PDF
+        if head.starts(with: [0xFF, 0xD8, 0xFF]) { return "jpg" }         // JPEG
+        if head.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return "png" }   // PNG
+        if head.starts(with: [0x47, 0x49, 0x46, 0x38]) { return "gif" }   // GIF8
+        if head.starts(with: [0x52, 0x49, 0x46, 0x46]) { return "webp" }  // RIFF（webp 常见）
+        if head.starts(with: [0x50, 0x4B, 0x03, 0x04]) { return "zip" }   // PK（zip/docx/xlsx）
+        return nil
+    }
+
+    private static let extByMime: [String: String] = [
+        "application/pdf": "pdf",
+        "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png",
+        "image/gif": "gif", "image/webp": "webp", "image/heic": "heic",
+        "image/svg+xml": "svg", "image/bmp": "bmp", "image/tiff": "tiff",
+        "application/msword": "doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "application/vnd.ms-excel": "xls",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+        "application/vnd.ms-powerpoint": "ppt",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+        "application/zip": "zip", "application/x-zip-compressed": "zip",
+        "application/x-rar-compressed": "rar", "application/x-7z-compressed": "7z",
+        "application/json": "json", "text/plain": "txt", "text/markdown": "md",
+        "text/csv": "csv", "application/rtf": "rtf",
+        "audio/mpeg": "mp3", "audio/mp4": "m4a", "video/mp4": "mp4",
+    ]
 
     private func fallback(typeName: String, icon: String) -> some View {
         VStack(spacing: 12) {
