@@ -219,39 +219,43 @@ struct ETAPIClient {
         return (try? JSONDecoder().decode([Note].self, from: data)) ?? []
     }
 
-    /// 子树下的直接子笔记（树的展开用；ancestorDepth=eq1 表示仅直接子级）。
-    /// ⚠️ 搜索接口返回的 Note 不含 childNoteIds（服务端批量查询不 load children），
-    ///   导致「text 类型但实际是容器」的笔记（如「我的笔记」）被误判为叶子。
-    ///   故这里拿到子笔记 id 后，并发 getNote 补全每个子笔记的 childNoteIds，
-    ///   树才能正确判断哪些可展开。每层节点少（十几个），并发拉很快。
+    /// 子树下的直接子笔记（树的展开用）。
+    /// ⚠️ 不要用 GET /etapi/notes?search + ancestorNoteId/ancestorDepth 做这事：
+    ///   实测 ancestorDepth=eq1 不生效（返回全部后代而非直接子级），再并发补全详情
+    ///   会打成几百个并发请求把隧道打挂（v1.2.3 卡「加载目录…」的根因）。
+    /// 正确做法：getNote(parent).childNoteIds（单笔记接口 childNoteIds 是填充的），
+    /// 然后并发（限流）getNote 每个子笔记补全详情。树层浅、每层节点少，开销可控。
     func childNotes(of parentId: String) async throws -> [Note] {
-        var q = [URLQueryItem(name: "search", value: Self.matchAll)]
-        q.append(URLQueryItem(name: "ancestorNoteId", value: parentId))
-        q.append(URLQueryItem(name: "ancestorDepth", value: "eq1"))
-        q.append(URLQueryItem(name: "orderBy", value: "title"))
-        q.append(URLQueryItem(name: "orderDirection", value: "asc"))
-        q.append(URLQueryItem(name: "limit", value: "500"))
-        let data = try await raw("/etapi/notes", query: q)
-        var list: [Note]
-        if let resp = try? JSONDecoder().decode(SearchResponse.self, from: data), let r = resp.results {
-            list = r
-        } else {
-            list = (try? JSONDecoder().decode([Note].self, from: data)) ?? []
-        }
-        // 并发补全 childNoteIds（判断容器用）
-        return await withTaskGroup(of: (Int, Note).self) { group in
-            for (i, n) in list.enumerated() {
-                group.addTask {
-                    if let full = try? await self.getNote(n.noteId) {
-                        return (i, full)
+        let parent = try await getNote(parentId)
+        let ids = parent.childNoteIds ?? []
+        guard !ids.isEmpty else { return [] }
+        AppLogger.shared.log("childNotes[\(parentId)]: \(ids.count) 个子笔记")
+
+        // 分批并发（每批 6 个），防止大目录瞬间打爆隧道
+        var out: [(Int, Note)] = []
+        let batchSize = 6
+        for start in stride(from: 0, to: ids.count, by: batchSize) {
+            let batch = Array(ids.enumerated())[start..<min(start + batchSize, ids.count)]
+            let results = await withTaskGroup(of: (Int, Note).self) { group in
+                for (i, id) in batch {
+                    group.addTask {
+                        if let full = try? await self.getNote(id) {
+                            return (i, full)
+                        }
+                        return (i, Note(noteId: id, title: "（加载失败）", type: "text",
+                                        mime: nil, isProtected: nil, isArchived: nil, blobId: nil,
+                                        childNoteIds: [], parentNoteIds: nil, parentBranchIds: nil,
+                                        childBranchIds: nil, attributes: nil, dateCreated: nil,
+                                        dateModified: nil, utcDateCreated: nil, utcDateModified: nil))
                     }
-                    return (i, n)
                 }
+                var r: [(Int, Note)] = []
+                for await pair in group { r.append(pair) }
+                return r
             }
-            var out: [(Int, Note)] = []
-            for await pair in group { out.append(pair) }
-            return out.sorted { $0.0 < $1.0 }.map(\.1)
+            out.append(contentsOf: results)
         }
+        return out.sorted { $0.0 < $1.0 }.map(\.1)
     }
 
     // MARK: - 收件箱
