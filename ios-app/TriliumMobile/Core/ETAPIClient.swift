@@ -178,4 +178,6 @@ struct ETAPIClient {
 extension Notification.Name {
     /// 会话过期（服务端重启导致 token 失效），Root 视图据此踢回登录页
     static let sessionExpired = Notification.Name("trilium.sessionExpired")
+    /// 请求退出登录：由 MainView 接收（sheet 持有者）显式关闭面板后再清 token
+    static let performLogout = Notification.Name("trilium.performLogout")
 }

@@ -54,6 +54,7 @@ struct RootView: View {
 /// 主界面：单一 NavigationView，列表优先（有道云风格）。
 /// 首页=笔记列表；右上角入口到「树」与「设置」；右下角悬浮「+」速记。
 struct MainView: View {
+    @EnvironmentObject private var settings: AppSettings
     @State private var showTree = false
     @State private var showSettings = false
 
@@ -74,5 +75,24 @@ struct MainView: View {
                 .sheet(isPresented: $showSettings) { SettingsView() }
         }
         .navigationViewStyle(.stack)
+        // 登出信号：sheet 的 dismiss() 在「sheet+根视图条件切换」组合下会与视图销毁竞争
+        // 导致面板残留（实测点三次都不关）。这里由持有 sheet 状态的 MainView 显式关闭，
+        // 等 sheet 关闭动画结束后再清 token 切换根视图，时序才稳。
+        .onReceive(NotificationCenter.default.publisher(for: .performLogout)) { _ in
+            AppLogger.shared.log("MainView 收到登出信号：关闭所有面板")
+            showSettings = false
+            showTree = false
+            Task {
+                try? await Task.sleep(nanoseconds: 400_000_000) // 等 sheet 关闭动画
+                AppLogger.shared.log("面板已关，执行 settings.logout()")
+                settings.logout()
+            }
+        }
+        // token 失效被踢（服务端重启）时同样要先关面板，否则面板残留挡住登录页
+        .onReceive(NotificationCenter.default.publisher(for: .sessionExpired)) { _ in
+            AppLogger.shared.log("MainView 收到会话过期：关闭所有面板")
+            showSettings = false
+            showTree = false
+        }
     }
 }

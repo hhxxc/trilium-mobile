@@ -32,10 +32,9 @@ struct SettingsView: View {
                 Section {
                     Button("退出登录", role: .destructive) {
                         AppLogger.shared.log("点击退出登录：token 长度 \(settings.token.count)")
-                        settings.logout()
-                        AppLogger.shared.log("退出登录后：isLoggedIn=\(settings.isLoggedIn), token 长度 \(settings.token.count)")
-                        dismiss()
-                        AppLogger.shared.log("已调用 dismiss() 关闭设置面板")
+                        // 不在这里 logout/dismiss：实测 sheet 内 dismiss() 与根视图条件切换
+                        // 竞争会导致面板残留。发信号让 MainView（sheet 的持有者）显式关闭
+                        NotificationCenter.default.post(name: .performLogout, object: nil)
                     }
                 }
 
