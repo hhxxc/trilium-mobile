@@ -39,6 +39,10 @@ struct RootView: View {
             if settings.lockEnabled { authenticate() }
             // 启动补交离线积压（有网才成功，失败留队列）
             await NoteCache.shared.flushPendingOps()
+            // 启动即静默检查更新：有新版直接在后台下，不弹任何东西
+            if settings.isLoggedIn {
+                Task { await UpdateCenter.shared.silentCheck() }
+            }
         }
         // 进后台立即上锁（锁屏/切走都算）；回前台弹认证 + 补交离线积压
         .onChange(of: scenePhase) { phase in
@@ -48,6 +52,10 @@ struct RootView: View {
             } else if phase == .active {
                 if settings.lockEnabled, isLocked { authenticate() }
                 Task { await NoteCache.shared.flushPendingOps() }
+                // 回前台顺带补一次更新检查（内部有 5 分钟节流，不会频繁打服务端）
+                if settings.isLoggedIn {
+                    Task { await UpdateCenter.shared.silentCheck() }
+                }
             }
         }
         .onChange(of: settings.isLoggedIn) { loggedIn in

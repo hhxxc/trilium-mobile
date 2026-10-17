@@ -62,6 +62,9 @@ struct NoteListView: View {
     @State private var organizeTarget: OrganizeTarget?
     /// 顶部轻提示（收藏/移动结果）
     @State private var toast: String?
+    /// 更新下载状态（真正跑在 UpdateCenter 的后台会话里，本视图销毁不影响）
+    @ObservedObject private var updater = UpdateCenter.shared
+    @State private var showUpdatePage = false
 
     private var isSearching: Bool {
         !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
@@ -121,6 +124,12 @@ struct NoteListView: View {
                 }
             }
         }
+        // 顶部常驻更新条：下载中/待安装时一直挂在列表上方，点开是常驻下载页
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if updater.phase.isDownloading || updater.phase.isReady {
+                updateBanner
+            }
+        }
         // ⚠️ 抽屉打开时必须收起底部工具条：safeAreaInset 的条带渲染在 ZStack 内容**之上**，
         //   不收起的话抽屉会在底部被工具条压一条，胶囊/＋按钮还能隔着抽屉点到。
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -156,6 +165,10 @@ struct NoteListView: View {
         }
         .sheet(isPresented: $showCompose) {
             ComposeView(onSaved: { await load() })
+        }
+        .sheet(isPresented: $showUpdatePage) {
+            NavigationView { UpdateView() }
+                .navigationViewStyle(.stack)
         }
         .sheet(item: $organizeTarget) { target in
             MoveTargetPicker(noteTitle: target.note.title) { parentId, parentTitle in
@@ -377,6 +390,63 @@ struct NoteListView: View {
         // 背景铺满全屏（含底部安全区），但内容留在安全区内
         .background(Color(UIColor.systemBackground).ignoresSafeArea())
         .shadow(color: .black.opacity(0.15), radius: 12, x: 4, y: 0)
+    }
+
+    // MARK: - 常驻更新条
+
+    /// 下载中 / 已就绪时一直挂在列表顶部（不随滚动消失），点开进入常驻下载页。
+    private var updateBanner: some View {
+        Button {
+            showUpdatePage = true
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: updater.phase.isReady ? "checkmark.seal.fill" : "arrow.down.circle.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(updater.phase.isReady ? .green : Color(red: 0.17, green: 0.61, blue: 0.56))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(updateBannerTitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    if let p = updateBannerProgress {
+                        ProgressView(value: p)
+                            .tint(Color(red: 0.17, green: 0.61, blue: 0.56))
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.bar)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Color(UIColor.separator).opacity(0.6)).frame(height: 0.5)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var updateBannerTitle: String {
+        switch updater.phase {
+        case .downloading(let received, let total):
+            let v = updater.latestVersion.map { " v\($0)" } ?? ""
+            guard total > 0 else { return "正在后台下载\(v)…" }
+            return "正在后台下载\(v) · \(Int(Double(received) / Double(total) * 100))%"
+        case .ready(let version, _):
+            return "v\(version) 已下载好 · 点此安装"
+        default:
+            return ""
+        }
+    }
+
+    private var updateBannerProgress: Double? {
+        if case .downloading(let received, let total) = updater.phase, total > 0 {
+            return min(1, Double(received) / Double(total))
+        }
+        return nil
     }
 
     // MARK: - 底部工具条

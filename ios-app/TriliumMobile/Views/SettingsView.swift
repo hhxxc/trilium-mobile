@@ -4,11 +4,10 @@ import UIKit
 /// 设置页：连接信息 / 退出登录 / 应用内更新（检查更新 → 下载 IPA → 系统分享面板选 TrollStore）
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
-    @ObservedObject private var update = UpdateStore.shared
+    @ObservedObject private var updater = UpdateCenter.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var serverVersion = ""
-    @State private var pendingShareVersion: String? = nil
     @State private var cacheSize: Int64 = -1 // -1 = 未测量
 
     var body: some View {
@@ -75,26 +74,15 @@ struct SettingsView: View {
                         Text("v\(UpdateChecker.currentAppVersion)")
                             .font(.footnote).foregroundColor(.secondary)
                     }
-
-                    if case .updateAvailable(_, let latest, _, _) = update.result {
+                    // 更新是独立常驻页：下载在后台会话里跑，这个页面关掉也不影响
+                    NavigationLink(destination: UpdateView()) {
                         HStack {
-                            Text("新版本")
+                            Text("软件更新")
                             Spacer()
-                            Text("v\(latest)").font(.footnote).foregroundColor(.blue)
+                            Text(updateSummary)
+                                .font(.footnote)
+                                .foregroundColor(updateSummaryColor)
                         }
-                    }
-
-                    Button(action: { Task { await update.checkNow() } }) {
-                        HStack {
-                            Text("检查更新")
-                            Spacer()
-                            if update.isChecking { ProgressView() }
-                        }
-                    }
-                    .disabled(update.isChecking)
-
-                    if let result = update.result {
-                        updateSection(for: result)
                     }
                 }
 
@@ -116,15 +104,7 @@ struct SettingsView: View {
                     Button("完成") { dismiss() }
                 }
             }
-            .onChange(of: update.downloadState) { state in
-                // 用户点了安装、下载完成 → 自动弹分享面板
-                if let ver = pendingShareVersion, case .downloaded(let f) = state {
-                    pendingShareVersion = nil
-                    presentShare(fileURL: f, version: ver)
-                }
-            }
             .task {
-                await update.autoCheckIfNeeded()
                 if let info = try? await ETAPIClient.shared.appInfo() {
                     serverVersion = info.appVersion ?? ""
                 }
@@ -134,77 +114,25 @@ struct SettingsView: View {
         .navigationViewStyle(.stack)
     }
 
-    @ViewBuilder
-    private func updateSection(for result: UpdateCheckResult) -> some View {
-        switch result {
-        case .upToDate:
-            Text("已是最新版本").font(.footnote).foregroundColor(.secondary)
-
-        case .updateAvailable(_, let latest, let releaseURL, _):
-            Section {
-                Button(action: install) {
-                    installButtonLabel(latest: latest)
-                }
-                .disabled(isDownloading)
-
-                if case .downloading(let received, let total) = update.downloadState {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ProgressView(value: total.map { Double(received) / Double($0) } ?? 0)
-                        Text("下载中 \(fmtKB(received))\(total.map { " / \(fmtKB($0))" } ?? "")")
-                            .font(.caption2).foregroundColor(.secondary)
-                    }
-                } else if case .downloaded = update.downloadState {
-                    Text("安装包已就绪，点「安装」弹出系统面板选 TrollStore")
-                        .font(.footnote).foregroundColor(.secondary)
-                }
-
-                if let url = releaseURL {
-                    Link("打开发布页", destination: url).font(.footnote)
-                }
-            }
-
-        case .failed(let message):
-            Text("检查失败：\(message)").font(.footnote).foregroundColor(.red)
+    /// 更新区的右侧摘要（下载中显示百分比，就绪显示待安装）
+    private var updateSummary: String {
+        switch updater.phase {
+        case .idle: return "已是最新"
+        case .checking: return "检查中…"
+        case .downloading(let received, let total):
+            guard total > 0 else { return "下载中…" }
+            return "下载中 \(Int(Double(received) / Double(total) * 100))%"
+        case .ready(let version, _): return "v\(version) 待安装"
+        case .failed: return "失败"
         }
     }
 
-    @ViewBuilder
-    private func installButtonLabel(latest: String) -> some View {
-        if case .downloading = update.downloadState {
-            Text("下载中…").frame(maxWidth: .infinity)
-        } else if case .downloaded = update.downloadState {
-            Text("安装 v\(latest)（已下载）").frame(maxWidth: .infinity)
-        } else {
-            Text("下载并安装 v\(latest)").frame(maxWidth: .infinity)
+    private var updateSummaryColor: Color {
+        switch updater.phase {
+        case .downloading, .ready: return Color(red: 0.17, green: 0.61, blue: 0.56)
+        case .failed: return .orange
+        default: return .secondary
         }
-    }
-
-    private var isDownloading: Bool {
-        if case .downloading = update.downloadState { return true }
-        return false
-    }
-
-    /// 安装：若已下载直接分享；否则先下载再分享（原生 UIActivityViewController）
-    private func install() {
-        guard case .updateAvailable(_, let latest, _, let ipaURL) = update.result,
-              let url = ipaURL else { return }
-
-        if case .downloaded(let fileURL) = update.downloadState {
-            presentShare(fileURL: fileURL, version: latest)
-            return
-        }
-        // 标记「用户点了安装」，下载完成后由 onChange 自动弹分享面板
-        pendingShareVersion = latest
-        update.startDownload(latest: latest, ipaURL: url)
-    }
-
-    private func presentShare(fileURL: URL, version: String) {
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let vc = scene.windows.first?.rootViewController else { return }
-        // 找最顶层的 controller 来 present
-        var top = vc
-        while let p = top.presentedViewController { top = p }
-        IPAShare.share(fileURL: fileURL, title: "Trilium v\(version)", from: top)
     }
 
     private func fmtKB(_ n: Int64) -> String {
