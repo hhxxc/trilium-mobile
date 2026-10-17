@@ -137,6 +137,7 @@ struct ETAPIClient {
     }
 
     /// 搜索（v0.106 走 GET /etapi/notes?search=…，兼容老 /etapi/search-notes）
+    /// ⚠️ 解码失败必须抛错并记日志，不能静默返回空——否则列表空白无任何提示（实测踩坑）
     func searchNotes(_ query: String, limit: Int = 30) async throws -> [Note] {
         let data: Data
         do {
@@ -144,9 +145,19 @@ struct ETAPIClient {
         } catch APIError.http(let status) where status == 404 {
             data = try await raw("/etapi/search-notes", query: [URLQueryItem(name: "search", value: query)])
         }
-        let resp = (try? JSONDecoder().decode(SearchResponse.self, from: data))
-        let list = resp?.results ?? (try? JSONDecoder().decode([Note].self, from: data)) ?? []
-        return Array(list.prefix(limit))
+        // 诊断：响应原文概况写入日志（含解码失败时用户截图即可定位结构差异）
+        let preview = String(data: data.prefix(300), encoding: .utf8) ?? "(非UTF8)"
+        AppLogger.shared.log("搜索[\(query.prefix(24))]响应: \(data.count)字节 \(preview.replacingOccurrences(of: "\n", with: " "))")
+
+        if let resp = try? JSONDecoder().decode(SearchResponse.self, from: data), let r = resp.results {
+            return Array(r.prefix(limit))
+        }
+        do {
+            return Array(try JSONDecoder().decode([Note].self, from: data).prefix(limit))
+        } catch {
+            AppLogger.shared.log("搜索解码失败: \(error.localizedDescription)")
+            throw APIError.invalidResponse
+        }
     }
 
     /// 最近修改的笔记（搜索语法 order by dateModified desc）

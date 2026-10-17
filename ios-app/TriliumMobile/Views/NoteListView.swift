@@ -41,6 +41,14 @@ struct NoteListView: View {
                 Button("重试") { Task { await load() } }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if notes.isEmpty {
+            VStack(spacing: 12) {
+                Image(systemName: "tray")
+                    .font(.system(size: 40)).foregroundColor(.secondary)
+                Text("没有笔记").font(.footnote).foregroundColor(.secondary)
+                Button("刷新试试") { Task { await load() } }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             List {
                 if !errorMsg.isEmpty {
@@ -78,8 +86,10 @@ struct NoteListView: View {
             } else {
                 notes = try await ETAPIClient.shared.searchNotes(q)
             }
+            AppLogger.shared.log("列表加载完成：\(notes.count) 条")
             errorMsg = ""
         } catch {
+            AppLogger.shared.log("列表加载失败: \(error.localizedDescription)")
             errorMsg = "加载失败：\(error.localizedDescription)"
         }
         loading = false
