@@ -15,6 +15,8 @@ struct NoteDetailView: View {
     @State private var errorMsg = ""
     @State private var showEditor = false
     @State private var shareURL: URL?
+    /// 笔记内链接点击后打开的目标笔记（sheet(item:)）
+    @State private var linkedNote: Note?
     // 附件预览状态
     @State private var fileDownloading = false
     @State private var fileProgress: Double = 0
@@ -96,7 +98,25 @@ struct NoteDetailView: View {
         .sheet(isPresented: $showEditor, onDismiss: { Task { await load(force: true) } }) {
             NativeEditorView(note: note, initialContent: textContent)
         }
+        // 笔记内链接：App 内新开一层阅读页（点返回关闭）
+        .sheet(item: $linkedNote) { linked in
+            NavigationView {
+                NoteDetailView(note: linked)
+            }
+            .navigationViewStyle(.stack)
+        }
         .task { await load() }
+    }
+
+    private func openLinkedNote(_ noteId: String) {
+        guard noteId != note.noteId else { return }
+        Task {
+            do {
+                linkedNote = try await ETAPIClient.shared.getNote(noteId)
+            } catch {
+                AppLogger.shared.log("打开笔记链接失败: \(error.localizedDescription)")
+            }
+        }
     }
 
     /// 导出为 HTML 文件分享（AirDrop / 备忘录 / 其他 App 均可收）
@@ -135,11 +155,11 @@ struct NoteDetailView: View {
         case "file":
             fileView
         case "code":
-            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "code", fontScale: settings.readerFontScale), noteId: note.noteId)
+            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "code", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote)
         case "render":
-            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "render", fontScale: settings.readerFontScale), noteId: note.noteId)
+            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "render", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote)
         case "text":
-            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "text", fontScale: settings.readerFontScale), noteId: note.noteId)
+            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "text", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote)
         default:
             fallback(typeName: note.type, icon: "doc.text")
         }
@@ -453,18 +473,74 @@ enum NoteHTML {
 struct ContentWebView: UIViewRepresentable {
     let html: String
     var noteId: String = ""
+    /// 点击笔记内链接时回调（Trilium 链接 → App 内打开该笔记）
+    var onOpenNote: ((String) -> Void)? = nil
 
-    func makeCoordinator() -> Coordinator { Coordinator(noteId: noteId) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(noteId: noteId, onOpenNote: onOpenNote)
+    }
 
     final class Coordinator: NSObject, WKNavigationDelegate, UIScrollViewDelegate {
         let noteId: String
+        let onOpenNote: ((String) -> Void)?
         var lastHTML = ""
         var hasRestored = false
         var lastSaveTime: TimeInterval = 0
 
-        init(noteId: String) { self.noteId = noteId }
+        init(noteId: String, onOpenNote: ((String) -> Void)?) {
+            self.noteId = noteId
+            self.onOpenNote = onOpenNote
+        }
 
         private var posKey: String { "trilium.readpos.\(noteId)" }
+
+        /// 链接拦截（loadHTMLString 的 baseURL 指向服务器，不拦的话点链接
+        /// 会把整个阅读页导航到 Trilium 桌面页/外部站点，阅读进度全丢）：
+        ///   - 站内笔记链接（#root/…=noteId）→ 回调 App 内打开
+        ///   - 其他 http/https 外链 → Safari 打开
+        ///   - 其余（初始 loadHTMLString、子资源加载）→ 放行
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url else {
+                decisionHandler(.allow)
+                return
+            }
+            decisionHandler(.cancel)
+
+            // 站内笔记链接：形如 <server>/#root/xxx=noteId 或 <server>/xxx?noteId=yyy
+            if let nid = Self.noteId(from: url, base: AppSettings.shared.serverURL), !nid.isEmpty {
+                DispatchQueue.main.async { [onOpenNote] in onOpenNote?(nid) }
+                return
+            }
+
+            // 外链交 Safari
+            if url.scheme == "http" || url.scheme == "https" {
+                DispatchQueue.main.async { UIApplication.shared.open(url) }
+            }
+        }
+
+        /// 从 Trilium 链接 URL 中提取 noteId（桌面端链接格式 #root/父=noteId）。
+        private static func noteId(from url: URL, base: URL) -> String? {
+            guard url.host == base.host, url.port == base.port else { return nil }
+            // 优先 query 参数 noteId=
+            if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+               let q = comps.queryItems?.first(where: { $0.name == "noteId" })?.value, !q.isEmpty {
+                return q
+            }
+            // fragment "#root/a/b=noteId"：取最后一段 = 后面的部分
+            if let frag = url.fragment?.split(separator: "/").last {
+                let s = String(frag)
+                if let eq = s.lastIndex(of: "=") {
+                    return String(s[s.index(after: eq)...])
+                }
+                return s
+            }
+            // path 末段兜底
+            if let last = url.pathComponents.last, last != "/" {
+                return last.contains("=") ? last.split(separator: "=").last.map(String.init) : last
+            }
+            return nil
+        }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             // 首次加载完成：恢复上次的阅读位置（需等内容布局出高度）
