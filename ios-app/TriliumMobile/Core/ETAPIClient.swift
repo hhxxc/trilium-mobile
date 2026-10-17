@@ -115,6 +115,16 @@ struct ETAPIClient {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
+    /// 二进制内容（image/file 笔记的 content 是二进制）
+    func getContentData(_ id: String) async throws -> Data {
+        try await raw("/etapi/notes/\(id)/content")
+    }
+
+    /// 附件下载（笔记的 attachment，如 file 笔记的附件内容）
+    func getAttachmentContent(_ attachmentId: String) async throws -> Data {
+        try await raw("/etapi/attachments/\(attachmentId)/content")
+    }
+
     func putContent(_ id: String, content: String) async throws {
         let body = content.data(using: .utf8)
         _ = try await raw("/etapi/notes/\(id)/content", method: "PUT",

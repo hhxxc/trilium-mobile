@@ -1,36 +1,22 @@
 import SwiftUI
 import WebKit
 
-/// 笔记详情（原生阅读页）：ETAPI 拿内容，本地渲染成移动端友好排版。
-/// 只有点「编辑」才进 Trilium 网页编辑器（完整编辑能力）。
+/// 笔记详情（原生阅读页）：ETAPI 拿内容，按类型原生渲染。
+/// text → 富文本 HTML；code → 代码；image → 图片；file → 附件；其他 → 降级提示。
+/// 编辑统一用原生编辑（text/code 用 TextEditor 改标题+正文；复杂类型给「用网页编辑器」兜底）。
 struct NoteDetailView: View {
     let note: Note
 
-    @State private var html: String = ""
+    @State private var textContent: String = ""
+    @State private var imageData: Data?
     @State private var loading = true
     @State private var errorMsg = ""
     @State private var showEditor = false
-
-    /// 可预览类型：text（HTML）/ code（纯文本）。image/file 等拿到的 content 是二进制，
-    /// 按 HTML 渲染只会白屏，直接给提示 + 编辑器入口。
-    private var isPreviewable: Bool {
-        note.type == "text" || note.type == "code"
-    }
 
     var body: some View {
         Group {
             if loading {
                 ProgressView("加载中…").frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if !isPreviewable {
-                VStack(spacing: 12) {
-                    Image(systemName: note.type == "image" ? "photo" : "paperclip")
-                        .font(.system(size: 40)).foregroundColor(.secondary)
-                    Text("「\(note.type)」类型暂不支持预览")
-                        .font(.footnote).foregroundColor(.secondary)
-                    Button("用编辑器打开") { showEditor = true }
-                        .buttonStyle(.bordered)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !errorMsg.isEmpty {
                 VStack(spacing: 12) {
                     Text(errorMsg).font(.footnote).foregroundColor(.secondary)
@@ -38,49 +24,184 @@ struct NoteDetailView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ContentWebView(html: html)
+                content
             }
         }
         .navigationTitle(note.title.isEmpty ? "笔记" : note.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button("编辑") { showEditor = true }
+                if note.type == "text" || note.type == "code" {
+                    Button("编辑") { showEditor = true }
+                }
             }
         }
         .sheet(isPresented: $showEditor, onDismiss: { Task { await load() } }) {
-            EditorView(note: note)
+            NativeEditorView(note: note, initialContent: textContent)
         }
         .task { await load() }
     }
 
+    @ViewBuilder
+    private var content: some View {
+        switch note.type {
+        case "image":
+            if let data = imageData, let img = UIImage(data: data) {
+                ScrollView([.horizontal, .vertical]) {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                }
+            } else {
+                fallback(typeName: "图片", icon: "photo")
+            }
+        case "file":
+            fileView
+        case "code":
+            ContentWebView(html: NoteHTML.wrap(title: note.title, raw: textContent, noteType: "code"))
+        case "render":
+            ContentWebView(html: NoteHTML.wrap(title: note.title, raw: textContent, noteType: "render"))
+        case "text":
+            ContentWebView(html: NoteHTML.wrap(title: note.title, raw: textContent, noteType: "text"))
+        default:
+            fallback(typeName: note.type, icon: "doc.text")
+        }
+    }
+
+    private var fileView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "doc.fill")
+                .font(.system(size: 48)).foregroundColor(.blue)
+            Text(note.title)
+                .font(.headline)
+            Text("附件类型（\(note.mime ?? "未知")）")
+                .font(.footnote).foregroundColor(.secondary)
+            Text("请在网页端下载或查看此附件")
+                .font(.caption).foregroundColor(.secondary)
+            Link("在网页端打开", destination: AppSettings.shared.serverURL)
+                .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func fallback(typeName: String, icon: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon).font(.system(size: 40)).foregroundColor(.secondary)
+            Text("「\(typeName)」类型暂不支持原生展示")
+                .font(.footnote).foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private func load() async {
         loading = true
-        guard isPreviewable else { // 不可预览类型不发请求（content 是二进制）
-            loading = false
-            return
-        }
         do {
-            let raw = try await ETAPIClient.shared.getContent(note.noteId)
-            // 诊断：把实际拿到的内容概况写日志，便于排查「正文空白」类问题
-            AppLogger.shared.log("阅读[\(note.title)]: type=\(note.type) 长度=\(raw.count) 开头=\(String(raw.prefix(80)).replacingOccurrences(of: "\n", with: " "))")
-            if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                html = Self.wrapForMobile(title: note.title, raw: "<p style='color:#8e8e93'>（空笔记）</p>", noteType: "text")
-            } else {
-                html = Self.wrapForMobile(title: note.title, raw: raw, noteType: note.type)
+            switch note.type {
+            case "image":
+                // 优先缓存，再走网络
+                if let cached = NoteCache.shared.loadBlob(note.noteId) {
+                    imageData = cached
+                } else if let data = try? await ETAPIClient.shared.getContentData(note.noteId) {
+                    imageData = data
+                    NoteCache.shared.saveBlob(note.noteId, data: data)
+                }
+            case "text", "code", "render":
+                if let cached = NoteCache.shared.loadContent(note.noteId) {
+                    textContent = cached
+                } else {
+                    let raw = try await ETAPIClient.shared.getContent(note.noteId)
+                    textContent = raw
+                    NoteCache.shared.saveContent(note.noteId, text: raw)
+                }
+            default:
+                break
             }
             errorMsg = ""
         } catch {
-            AppLogger.shared.log("阅读[\(note.title)]失败: \(error.localizedDescription)")
             errorMsg = "加载失败：\(error.localizedDescription)"
         }
         loading = false
     }
+}
 
-    /// 把笔记内容包进移动端友好的 HTML 骨架：
-    /// viewport / 字号 / 行距 / 图片自适应 / 代码块横向滚动 / 暗色模式适配。
-    /// code 类笔记内容不是 HTML，按纯文本转义后放 <pre>。
-    static func wrapForMobile(title: String, raw: String, noteType: String) -> String {
+/// 原生编辑器：text/code 笔记直接改标题 + 正文（纯 SwiftUI，不再依赖网页编辑器）
+struct NativeEditorView: View {
+    let note: Note
+    let initialContent: String
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var title: String = ""
+    @State private var content: String = ""
+    @State private var saving = false
+    @State private var errorMsg = ""
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("标题") {
+                    TextField("标题", text: $title)
+                }
+                Section("内容") {
+                    if note.type == "code" {
+                        TextEditor(text: $content)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 300)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                    } else {
+                        // text 笔记正文是 HTML，纯文本编辑会破坏格式；
+                        // 这里给一个说明 + 用网页编辑器兜底
+                        Text("富文本笔记建议用网页编辑器编辑（保留格式）。\n如需纯文本编辑可切 code 类型。")
+                            .font(.footnote).foregroundColor(.secondary)
+                    }
+                }
+                if !errorMsg.isEmpty {
+                    Section { Text(errorMsg).font(.footnote).foregroundColor(.red) }
+                }
+            }
+            .navigationTitle("编辑")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { save() }.disabled(saving)
+                }
+            }
+            .onAppear {
+                title = note.title
+                content = initialContent
+            }
+        }
+    }
+
+    private func save() {
+        saving = true
+        Task {
+            do {
+                // 标题变化 → PATCH；正文变化（code 类型）→ PUT content
+                if title != note.title {
+                    _ = try await ETAPIClient.shared.patchNote(note.noteId, fields: ["title": title])
+                }
+                if note.type == "code" && content != initialContent {
+                    try await ETAPIClient.shared.putContent(note.noteId, content: content)
+                }
+                // 更新缓存
+                NoteCache.shared.saveContent(note.noteId, text: content)
+                dismiss()
+            } catch {
+                errorMsg = "保存失败：\(error.localizedDescription)"
+            }
+            saving = false
+        }
+    }
+}
+
+/// HTML 包装工具（抽离，供阅读页复用）
+enum NoteHTML {
+    static func wrap(title: String, raw: String, noteType: String) -> String {
         let escapedTitle = title
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
@@ -94,13 +215,9 @@ struct NoteDetailView: View {
                 .replacingOccurrences(of: ">", with: "&gt;")
             bodyContent = "<pre>\(escaped)</pre>"
         } else {
-            // text 笔记 content 本身就是 HTML，直接用
             bodyContent = raw
         }
 
-        // 防御：若服务端返回的是完整 HTML 文档（含 <html>/<body>），不能嵌进骨架
-        //（嵌套文档标签会被浏览器丢弃，head 里的脚本/样式可能干扰渲染）。
-        // 此时直接用原文档，把移动端样式注入 </head> 前。
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if noteType != "code" && (trimmed.hasPrefix("<!doctype") || trimmed.hasPrefix("<html")) {
             let mobileCSS = """
@@ -168,15 +285,13 @@ struct NoteDetailView: View {
 }
 
 /// 本地 HTML 渲染（loadHTMLString，不加载 Trilium 桌面页）。
-/// baseURL 指向服务器：笔记里的相对路径图片/附件（/api/attachments/...）才能加载。
+/// baseURL 指向服务器：笔记里的相对路径图片/附件才能加载。
 struct ContentWebView: UIViewRepresentable {
     let html: String
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator {
-        // 上次已渲染的内容：字符串直比做 diff。
-        //（旧版存 html.hashValue 到 view.tag：hashValue 种子每次启动随机且可能碰撞，不可靠）
         var lastHTML: String = ""
     }
 
@@ -191,7 +306,6 @@ struct ContentWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        // 内容变化时重载（如编辑返回后刷新）；字符串相同则不重载，避免闪烁
         guard context.coordinator.lastHTML != html else { return }
         context.coordinator.lastHTML = html
         uiView.loadHTMLString(html, baseURL: AppSettings.shared.serverURL)

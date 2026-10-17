@@ -87,6 +87,7 @@ struct NoteListView: View {
             let q = searchQuery.trimmingCharacters(in: .whitespaces)
             if q.isEmpty {
                 notes = try await ETAPIClient.shared.recentNotes()
+                NoteCache.shared.saveRecentNotes(notes) // 缓存，离线可看
             } else {
                 notes = try await ETAPIClient.shared.searchNotes(q)
             }
@@ -94,7 +95,13 @@ struct NoteListView: View {
             errorMsg = ""
         } catch {
             AppLogger.shared.log("列表加载失败: \(error.localizedDescription)")
-            errorMsg = "加载失败：\(error.localizedDescription)"
+            // 网络失败时回退缓存（离线可看）
+            if let cached = NoteCache.shared.loadRecentNotes(), !cached.isEmpty {
+                notes = cached
+                errorMsg = "离线模式（显示缓存）"
+            } else {
+                errorMsg = "加载失败：\(error.localizedDescription)"
+            }
         }
         loading = false
     }
