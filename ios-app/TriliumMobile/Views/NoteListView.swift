@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 首页：笔记列表（有道云风格，列表优先）。
 /// 大标题 + 搜索入口 + 笔记列表（标题/时间分组），右下角悬浮「+」速记。
@@ -198,6 +199,7 @@ struct NoteListView: View {
             try await ETAPIClient.shared.deleteNote(note.noteId)
             NoteCache.shared.remove(note.noteId)
             notes.removeAll { $0.noteId == note.noteId }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
             AppLogger.shared.log("已删除笔记: \(note.title)")
         } catch {
             AppLogger.shared.log("删除失败: \(error.localizedDescription)")
@@ -300,6 +302,8 @@ struct ComposeView: View {
             do {
                 let inboxId = try await ETAPIClient.shared.ensureInbox()
                 _ = try await ETAPIClient.shared.createNote(parentNoteId: inboxId, title: content)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                text = "" // 清输入，连续速记不用手动删
                 await onSaved()
                 dismiss()
             } catch {
