@@ -35,6 +35,8 @@ struct RootView: View {
             settings.logout()
         }
         .task {
+            // 先自愈连接：公网证书过期 / 出门回家换网时，主备地址自动互换
+            if settings.isLoggedIn { await ServerProbe.ensureReachable() }
             await validateToken()
             if settings.lockEnabled { authenticate() }
             // 启动补交离线积压（有网才成功，失败留队列）
@@ -52,6 +54,10 @@ struct RootView: View {
             } else if phase == .active {
                 if settings.lockEnabled, isLocked { authenticate() }
                 Task { await NoteCache.shared.flushPendingOps() }
+                // 回前台补一次连接自愈（换网/证书恢复都能自动切回）
+                if settings.isLoggedIn {
+                    Task { await ServerProbe.ensureReachable() }
+                }
                 // 回前台顺带补一次更新检查（内部有 5 分钟节流，不会频繁打服务端）
                 if settings.isLoggedIn {
                     Task { await UpdateCenter.shared.silentCheck() }

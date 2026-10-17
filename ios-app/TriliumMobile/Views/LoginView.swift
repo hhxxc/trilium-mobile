@@ -39,15 +39,16 @@ struct LoginView: View {
                 if showLANShortcut {
                     Section {
                         Button {
-                            server = "http://192.168.31.198:18190"
-                            status = "已切到内网地址，点「登录」重试（需与 NAS 在同一 Wi-Fi）"
+                            let backup = AppSettings.shared.serverBackup
+                            server = backup.isEmpty ? AppConfig.defaultBackupServer : backup
+                            status = "已切到备用地址，点「登录」重试（内网地址需与 NAS 在同一 Wi-Fi）"
                             showLANShortcut = false
                         } label: {
-                            Label("改用内网地址", systemImage: "wifi")
+                            Label("改用备用地址", systemImage: "wifi")
                         }
                     }
                 }
-                Section(footer: Text("默认走 ddnsto 公网，家内外通用；在家可改内网 http://192.168.31.198:18190 更快。")) {
+                Section(footer: Text("默认走 ddnsto 公网，家内外通用；公网连不上会自动切到备用地址（内网 http://192.168.31.198:18190），切回来不用重新登录。")) {
                     EmptyView()
                 }
             }

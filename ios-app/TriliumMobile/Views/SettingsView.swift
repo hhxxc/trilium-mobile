@@ -9,16 +9,42 @@ struct SettingsView: View {
 
     @State private var serverVersion = ""
     @State private var cacheSize: Int64 = -1 // -1 = 未测量
+    @State private var probeMsg = ""
 
     var body: some View {
         NavigationView {
             Form {
-                Section("连接") {
+                Section {
                     HStack {
                         Text("服务器")
                         Spacer()
                         Text(settings.server).font(.footnote).foregroundColor(.secondary)
                             .lineLimit(1).truncationMode(.middle)
+                    }
+                    // 主备地址：当前地址不通时（证书过期 / 换网）自动互换，token 不变
+                    HStack {
+                        Text("备用地址")
+                        TextField(AppConfig.defaultBackupServer, text: Binding(
+                            get: { settings.serverBackup },
+                            set: { settings.serverBackup = $0 }))
+                            .font(.footnote)
+                            .multilineTextAlignment(.trailing)
+                            .keyboardType(.URL)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                    }
+                    Button {
+                        Task {
+                            probeMsg = "检测中…"
+                            let ok = await ServerProbe.ensureReachable()
+                            probeMsg = ok ? "当前地址可用：\(settings.server)"
+                                          : "两个地址都连不上，检查网络后重试"
+                        }
+                    } label: {
+                        Text("检测并自动切换")
+                    }
+                    if !probeMsg.isEmpty {
+                        Text(probeMsg).font(.caption).foregroundColor(.secondary)
                     }
                     if !serverVersion.isEmpty {
                         HStack {
@@ -27,6 +53,10 @@ struct SettingsView: View {
                             Text(serverVersion).font(.footnote).foregroundColor(.secondary)
                         }
                     }
+                } header: {
+                    Text("连接")
+                } footer: {
+                    Text("当前地址不通时会自动切到备用地址（例如内网穿透证书过期、出门回家换网）。token 跟地址无关，切换不需要重新登录。")
                 }
 
                 Section {
