@@ -8,3 +8,4 @@ nas_config.local.py
 .workbuddy/
 .ci-tmp/
 ios-app/build/
+ci_log*
