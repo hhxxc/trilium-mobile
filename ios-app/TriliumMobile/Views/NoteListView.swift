@@ -20,13 +20,15 @@ struct NoteListView: View {
     @State private var searchHistory: [String] = []
     /// 离线待同步操作数（顶部提示条）
     @State private var pendingCount = 0
+    /// 左滑抽屉：目录树覆盖层（学有道云/Obsidian——树和列表共存，不用二选一）
+    @State private var drawerOpen = false
 
     private var isSearching: Bool {
         !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
+        ZStack(alignment: .leading) {
             Group {
                 if isSearching || browseMode == 0 {
                     content
@@ -34,25 +36,45 @@ struct NoteListView: View {
                     TreeView(embedded: true)
                 }
             }
-            composeButton
+            // 左边缘拖拽热区（仅 22pt 宽，不影响列表上下滚动）
+            HStack(spacing: 0) {
+                Color.clear
+                    .frame(width: 22)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 12)
+                            .onEnded { v in
+                                if v.translation.width > 50 {
+                                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                        drawerOpen = true
+                                    }
+                                }
+                            }
+                    )
+                Spacer(minLength: 0)
+            }
+            // 抽屉遮罩 + 目录树
+            if drawerOpen {
+                Color.black.opacity(0.28)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { drawerOpen = false }
+                    }
+                treeDrawer
+                    .transition(.move(edge: .leading))
+            }
         }
         .navigationTitle(isSearching ? "搜索" : (browseMode == 0 ? "最近" : "目录"))
         .navigationBarTitleDisplayMode(isSearching ? .inline : .large)
         // 目录模式没有搜索框；最近/搜索才有
         .searchable(text: $searchQuery, prompt: "搜索笔记")
-        // ⚠️ 视图切换器不能放 toolbar：iOS 15 对 toolbar 内 segmented Picker 渲染异常
-        //   （实测不显示）。放内容区顶部固定条（safeAreaInset，iOS 15 稳定支持）。
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if !isSearching {
-                Picker("视图", selection: $browseMode) {
-                    Label("最近", systemImage: "clock").tag(0)
-                    Label("目录", systemImage: "folder").tag(1)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(.bar)
-            }
+        // ⚠️ 视图切换器与新建按钮都放**底部**（拇指可达区）：
+        //   - 放 toolbar 里 iOS 15 不渲染（实测）
+        //   - 放顶部横条够不到（思源被骂的第一条就是高频操作在左上角）
+        //   底部 safeAreaInset 是 iOS 15 稳定支持，且单手拇指正好够到。
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            bottomBar
         }
         // 防抖实时搜索：query 变化后停 400ms 才发请求，连续输入不轰服务端；
         // 旧任务会被自动取消（结构化并发），旧请求不会抢跑
@@ -196,17 +218,87 @@ struct NoteListView: View {
         return [("今天", today), ("昨天", yesterday), ("本周", week), ("更早", earlier)]
     }
 
-    private var composeButton: some View {
-        Button { showCompose = true } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(width: 56, height: 56)
-                .background(Circle().fill(Color(red: 0.17, green: 0.61, blue: 0.56)))
-                .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+    /// 抽屉里的目录树（覆盖 86% 宽，顶部带标题和关闭）
+    private var treeDrawer: some View {
+        let w = UIScreen.main.bounds.width * 0.86
+        return VStack(spacing: 0) {
+            HStack {
+                Text("目录")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { drawerOpen = false }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(Color(UIColor.tertiaryLabel))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            Divider()
+            TreeView(embedded: true)
         }
-        .padding(.trailing, 20)
-        .padding(.bottom, 20)
+        .frame(width: w)
+        .frame(maxHeight: .infinity)
+        .background(Color(UIColor.systemBackground))
+        .ignoresSafeArea(edges: .bottom)
+        .shadow(color: .black.opacity(0.15), radius: 12, x: 4, y: 0)
+    }
+
+    /// 底部工具条：左「最近 / 目录」胶囊切换 + 右「＋」新建。全部在拇指区。
+    private var bottomBar: some View {
+        HStack(spacing: 10) {
+            if !isSearching {
+                modeChip(icon: "clock", text: "最近", tag: 0)
+                modeChip(icon: "folder", text: "目录", tag: 1)
+            }
+            Spacer(minLength: 8)
+            composeButton
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .background(.bar)
+    }
+
+    private func modeChip(icon: String, text: String, tag: Int) -> some View {
+        let active = browseMode == tag
+        return Button {
+            if browseMode != tag {
+                browseMode = tag
+                UISelectionFeedbackGenerator().selectionChanged()
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 13, weight: .semibold))
+                Text(text).font(.subheadline.weight(active ? .semibold : .regular))
+            }
+            .foregroundColor(active ? .white : Color.secondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(
+                Capsule().fill(active ? Color(red: 0.17, green: 0.61, blue: 0.56) : Color.clear)
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var composeButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showCompose = true
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 44, height: 44)
+                .background(Circle().fill(Color(red: 0.17, green: 0.61, blue: 0.56)))
+                .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
+        }
+        .buttonStyle(.plain)
+        // 44pt 热区（思源被骂「图标小易误触」，热区必须够）
     }
 
     private func load() async {
@@ -276,27 +368,75 @@ struct NoteListView: View {
     }
 }
 
-/// 笔记列表行：类型图标 + 标题 + 修改时间
+/// 笔记列表行：类型图标 + 标题 + 正文摘要 + 修改时间。
+/// ⚠️ 三行结构（标题/摘要/时间）照抄苹果备忘录 + 有道云：
+///   用户库里全是「密码」「网线线序」这种短标题，光看标题分不清内容，
+///   摘要那一行才是真正帮人快速定位的信息。
 struct NoteRow: View {
     let note: Note
+    @State private var summary: String = ""
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: Self.icon(for: note.type))
                 .foregroundColor(Self.iconColor(for: note.type))
-                .frame(width: 24)
-            VStack(alignment: .leading, spacing: 4) {
+                .font(.system(size: 18))
+                .frame(width: 26, height: 26)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 3) {
                 Text(note.title.isEmpty ? "（无标题）" : note.title)
-                    .font(.body)
-                    .lineLimit(2)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+
+                if !summary.isEmpty {
+                    Text(summary)
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+
                 if !note.friendlyModified.isEmpty {
                     Text(note.friendlyModified)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(UIColor.tertiaryLabel))
                 }
             }
+            Spacer(minLength: 0)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
+        .onAppear { loadSummaryIfNeeded() }
+    }
+
+    private func loadSummaryIfNeeded() {
+        guard summary.isEmpty else { return }
+        // 图片/附件类给类型说明（正文是二进制，没有文字摘要）
+        switch note.type {
+        case "image":
+            summary = "图片"
+            return
+        case "file":
+            summary = "附件" + (note.mime.map { " · \($0)" } ?? "")
+            return
+        default: break
+        }
+        // 文字类：读本地缓存的内容（读过的笔记才有），剥标签取前 70 字
+        guard let html = NoteCache.shared.loadContent(note.noteId), !html.isEmpty else { return }
+        let text = Self.plainText(from: html)
+        if !text.isEmpty { summary = String(text.prefix(70)) }
+    }
+
+    /// HTML → 纯文本（去标签、解常见实体、压空白）
+    static func plainText(from html: String) -> String {
+        var s = html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        let entities: [(String, String)] = [
+            ("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+            ("&quot;", "\""), ("&#39;", "'"), ("&ldquo;", "「"), ("&rdquo;", "」")
+        ]
+        for (k, v) in entities { s = s.replacingOccurrences(of: k, with: v) }
+        s = s.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func icon(for type: String) -> String {

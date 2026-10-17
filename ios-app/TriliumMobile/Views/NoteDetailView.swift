@@ -32,6 +32,47 @@ struct NoteDetailView: View {
     /// 编辑改标题后的最新标题（note 是 let，PATCH 后靠这里刷新显示）
     @State private var freshTitle: String = ""
     @State private var freshType: String = ""
+    // 同层兄弟导航（底部条：上一篇/下一篇 + 父路径）
+    @State private var siblings: [Note] = []
+    @State private var parentTitle: String = ""
+    @State private var isLoadingSiblings = true
+
+    /// 同层上一篇 / 下一篇（依赖 siblings 的服务端 childNoteIds 顺序）
+    private var prevSibling: Note? {
+        guard let i = siblings.firstIndex(where: { $0.noteId == note.noteId }), i > 0 else { return nil }
+        return siblings[i - 1]
+    }
+    private var nextSibling: Note? {
+        guard let i = siblings.firstIndex(where: { $0.noteId == note.noteId }),
+              i + 1 < siblings.count else { return nil }
+        return siblings[i + 1]
+    }
+
+    private var siblingBar: some View {
+        HStack(spacing: 0) {
+            if let p = prevSibling {
+                NavigationLink(destination: NoteDetailView(note: p)) {
+                    Label("上一篇", systemImage: "chevron.left").font(.footnote)
+                }
+            }
+            Spacer()
+            if !parentTitle.isEmpty {
+                Text(parentTitle)
+                    .font(.caption2)
+                    .foregroundColor(Color(UIColor.tertiaryLabel))
+                    .lineLimit(1)
+            }
+            Spacer()
+            if let n = nextSibling {
+                NavigationLink(destination: NoteDetailView(note: n)) {
+                    Label("下一篇", systemImage: "chevron.right").font(.footnote)
+                }
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
 
     private var displayTitle: String { freshTitle.isEmpty ? note.title : freshTitle }
 
@@ -64,6 +105,12 @@ struct NoteDetailView: View {
         }
         .navigationTitle(displayTitle.isEmpty ? "笔记" : displayTitle)
         .navigationBarTitleDisplayMode(.inline)
+        // 底部操作条：上一篇 / 父路径 / 下一篇（拇指区，不用回列表再点）
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !isLoadingSiblings && (prevSibling != nil || nextSibling != nil || !parentTitle.isEmpty) {
+                siblingBar
+            }
+        }
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 if note.type == "text" || note.type == "code" || note.type == "render" {
@@ -154,7 +201,10 @@ struct NoteDetailView: View {
             }
             .navigationViewStyle(.stack)
         }
-        .task { await load() }
+        .task {
+            await load()
+            await loadSiblings()
+        }
     }
 
     private func openLinkedNote(_ noteId: String) {
@@ -307,6 +357,20 @@ struct NoteDetailView: View {
                 .font(.footnote).foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// 拉同层兄弟（底部条上/下篇）+ 父笔记标题（面包屑）。
+    /// 依赖 note.parentNoteIds（搜索接口可能不填充，为空就静默不显示底部条）
+    private func loadSiblings() async {
+        isLoadingSiblings = true
+        defer { isLoadingSiblings = false }
+        guard let pid = note.parentNoteIds?.first else { return }
+        if let p = try? await ETAPIClient.shared.getNote(pid) {
+            parentTitle = p.title
+        }
+        if let list = try? await ETAPIClient.shared.childNotes(of: pid) {
+            siblings = list
+        }
     }
 
     /// force=true：跳过缓存直拉网络（编辑保存后必须用，否则读到旧缓存）
