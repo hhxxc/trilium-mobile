@@ -135,11 +135,11 @@ struct NoteDetailView: View {
         case "file":
             fileView
         case "code":
-            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "code", fontScale: settings.readerFontScale))
+            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "code", fontScale: settings.readerFontScale), noteId: note.noteId)
         case "render":
-            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "render", fontScale: settings.readerFontScale))
+            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "render", fontScale: settings.readerFontScale), noteId: note.noteId)
         case "text":
-            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "text", fontScale: settings.readerFontScale))
+            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "text", fontScale: settings.readerFontScale), noteId: note.noteId)
         default:
             fallback(typeName: note.type, icon: "doc.text")
         }
@@ -449,13 +449,45 @@ enum NoteHTML {
 
 /// 本地 HTML 渲染（loadHTMLString，不加载 Trilium 桌面页）。
 /// baseURL 指向服务器：笔记里的相对路径图片/附件才能加载。
+/// 传 noteId 时记忆阅读进度：重进笔记自动滚到上次位置。
 struct ContentWebView: UIViewRepresentable {
     let html: String
+    var noteId: String = ""
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(noteId: noteId) }
 
-    final class Coordinator {
-        var lastHTML: String = ""
+    final class Coordinator: NSObject, WKNavigationDelegate, UIScrollViewDelegate {
+        let noteId: String
+        var lastHTML = ""
+        var hasRestored = false
+        var lastSaveTime: TimeInterval = 0
+
+        init(noteId: String) { self.noteId = noteId }
+
+        private var posKey: String { "trilium.readpos.\(noteId)" }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            // 首次加载完成：恢复上次的阅读位置（需等内容布局出高度）
+            guard !hasRestored, !noteId.isEmpty else { return }
+            hasRestored = true
+            let y = UserDefaults.standard.double(forKey: posKey)
+            guard y > 0 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak webView] in
+                guard let sv = webView?.scrollView else { return }
+                guard sv.contentSize.height > sv.frame.height else { return }
+                let maxY = sv.contentSize.height - sv.frame.height
+                sv.setContentOffset(CGPoint(x: 0, y: min(y, maxY)), animated: false)
+            }
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            // 节流保存阅读进度（0.5s 一次，避免滚动时高频写盘）
+            guard hasRestored, !noteId.isEmpty else { return }
+            let now = Date().timeIntervalSince1970
+            guard now - lastSaveTime > 0.5 else { return }
+            lastSaveTime = now
+            UserDefaults.standard.set(scrollView.contentOffset.y, forKey: posKey)
+        }
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -463,6 +495,8 @@ struct ContentWebView: UIViewRepresentable {
         wv.isOpaque = false
         wv.backgroundColor = .clear
         wv.scrollView.backgroundColor = .clear
+        wv.navigationDelegate = context.coordinator
+        wv.scrollView.delegate = context.coordinator
         context.coordinator.lastHTML = html
         wv.loadHTMLString(html, baseURL: AppSettings.shared.serverURL)
         return wv
