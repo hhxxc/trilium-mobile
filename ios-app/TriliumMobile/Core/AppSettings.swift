@@ -39,11 +39,13 @@ final class AppSettings: ObservableObject {
 
     private init() {
         let d = UserDefaults.standard
-        server = d.string(forKey: Keys.server) ?? AppConfig.defaultServer
-        token = d.string(forKey: Keys.token) ?? ""
+        let savedServer = d.string(forKey: Keys.server) ?? AppConfig.defaultServer
+        let savedToken = d.string(forKey: Keys.token) ?? ""
+        server = savedServer
+        token = savedToken
         inboxNoteId = d.string(forKey: Keys.inboxNoteId) ?? ""
         inboxTitle = d.string(forKey: Keys.inboxTitle) ?? AppConfig.defaultInboxTitle
-        isLoggedIn = !token.isEmpty
+        isLoggedIn = !savedToken.isEmpty  // 用局部变量，避免 init 里访问 self.token 的初始化顺序问题
     }
 
     func save(token: String, server: String) {
