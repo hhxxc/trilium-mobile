@@ -353,7 +353,7 @@ final class UpdateStore: ObservableObject {
         AppLogger.shared.log("更新下载开始: v\(latest)")
 
         let candidates = UpdateChecker.downloadCandidates(ipaURL: ipaURL)
-        AppLogger.shared.log("下载源(\(candidates.count)个): \(candidates.map { $0.host }.joined(separator: ", "))")
+        AppLogger.shared.log("下载源(\(candidates.count)个): \(candidates.map { $0.host ?? "?" }.joined(separator: ", "))")
         let destination = IPAFileDownloader.destinationURL(version: latest)
         let downloader = IPAFileDownloader { [weak self] received, total in
             Task { @MainActor in
