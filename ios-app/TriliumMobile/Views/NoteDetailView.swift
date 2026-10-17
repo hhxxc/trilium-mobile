@@ -144,12 +144,7 @@ struct NoteDetailView: View {
         switch note.type {
         case "image":
             if let data = imageData, let img = UIImage(data: data) {
-                ScrollView([.horizontal, .vertical]) {
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity)
-                }
+                ZoomableImageView(image: img)
             } else {
                 fallback(typeName: "图片", icon: "photo")
             }
@@ -372,6 +367,10 @@ struct NativeEditorView: View {
                 }
                 // 更新缓存
                 NoteCache.shared.saveContent(note.noteId, text: content)
+                // 广播元数据变化：让首页列表行同步新标题（否则返回列表还是旧标题）
+                if title != note.title {
+                    NotificationCenter.default.post(name: .noteMetaChanged, object: nil)
+                }
                 dismiss()
             } catch {
                 errorMsg = "保存失败：\(error.localizedDescription)"
@@ -379,6 +378,11 @@ struct NativeEditorView: View {
             saving = false
         }
     }
+}
+
+extension Notification.Name {
+    /// 笔记标题等元数据被修改（编辑器保存后广播，首页列表就地刷新）
+    static let noteMetaChanged = Notification.Name("trilium.noteMetaChanged")
 }
 
 /// HTML 包装工具（抽离，供阅读页复用）
@@ -720,4 +724,52 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+/// 图片查看：双指捏合缩放（1x~6x）+ 双击 1x/2x 切换；放大后可拖动平移，缩回 1x 自动复位
+struct ZoomableImageView: View {
+    let image: UIImage
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    private func reset() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            scale = 1; lastScale = 1; offset = .zero; lastOffset = .zero
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: geo.size.width, height: geo.size.height)
+                .scaleEffect(scale)
+                .offset(offset)
+                .gesture(
+                    MagnificationGesture()
+                        .onChanged { v in scale = min(max(lastScale * v, 1), 6) }
+                        .onEnded { _ in
+                            lastScale = scale
+                            if scale <= 1.01 { reset() }
+                        }
+                )
+                .simultaneousGesture(
+                    DragGesture()
+                        .onChanged { v in
+                            guard scale > 1 else { return }
+                            offset = CGSize(width: lastOffset.width + v.translation.width,
+                                            height: lastOffset.height + v.translation.height)
+                        }
+                        .onEnded { _ in lastOffset = offset }
+                )
+                .onTapGesture(count: 2) {
+                    if scale > 1 { reset() } else {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { scale = 2; lastScale = 2 }
+                    }
+                }
+        }
+    }
 }

@@ -65,6 +65,10 @@ struct NoteListView: View {
         .onAppear {
             searchHistory = UserDefaults.standard.stringArray(forKey: "trilium.searchHistory") ?? []
         }
+        // 编辑器改了标题：就地刷新列表，返回时看到的不是旧标题
+        .onReceive(NotificationCenter.default.publisher(for: .noteMetaChanged)) { _ in
+            Task { await load() }
+        }
         .sheet(isPresented: $showCompose) {
             ComposeView(onSaved: { await load() })
         }
