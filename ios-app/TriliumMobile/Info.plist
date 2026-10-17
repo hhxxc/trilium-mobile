@@ -36,6 +36,18 @@
 	<array>
 		<string>apple-magnifier</string>
 	</array>
+	<!-- 分享扩展经此 scheme 把内容带回宿主（trilium://quick-note?text=...） -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.hhxxc.trilium.quicknote</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>trilium</string>
+			</array>
+		</dict>
+	</array>
 	<!-- 阅读页长按图片 → 保存到相册（仅写入相册，不读取） -->
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>用于将笔记中的图片保存到相册</string>

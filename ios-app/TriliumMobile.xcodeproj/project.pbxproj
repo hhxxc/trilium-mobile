@@ -23,8 +23,34 @@
 		6559bc9f75e655a18a686c92 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37e78a6aade5504398a2f5fc /* SettingsView.swift */; };
 		02f93e95a8f9519e85c760b5 /* TreeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36124ab65b8c5e6ebdb5ec0f /* TreeView.swift */; };
 		4bb9ccdf258b582eb9bfd1f8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = eaab85ea488d522a9c29a654 /* Assets.xcassets */; };
-		53E4D00000000000000000A1 /* mermaid.min.js in Resources */ = {isa = PBXBuildFile; fileRef = 53E4D00000000000000000A2 /* mermaid.min.js */; };
+		80fe6bde9e155b9facc8c3d1 /* mermaid.min.js in Resources */ = {isa = PBXBuildFile; fileRef = 93f90dab3128520a9bb6a252 /* mermaid.min.js */; };
+		87d1f872efbf5b3c9a49ee58 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4a125de50cdd579988e7f48d /* ShareViewController.swift */; };
+		f650f24dab7e50c88f098a6d /* TriliumShare.appex in Embed Foundation */ = {isa = PBXBuildFile; fileRef = 7fda10ce886552c69fd20a55 /* TriliumShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		ba415fe8e15d51318f24a615 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = f6cecbbb17625e10a9111355 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 425e2dd58fb85360858c8e4f;
+			remoteInfo = ShareExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		cd3a4c9567cb534aa6fd392e /* Embed Foundation */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				f650f24dab7e50c88f098a6d /* TriliumShare.appex in Embed Foundation */,
+			);
+			name = "Embed Foundation";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		d99d34662c9654fd9e5388eb /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/AppConfig.swift; sourceTree = "<group>"; };
@@ -44,7 +70,9 @@
 		36124ab65b8c5e6ebdb5ec0f /* TreeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/TreeView.swift; sourceTree = "<group>"; };
 		16e2e8000f285b40a0d23f25 /* TriliumMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TriliumMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		eaab85ea488d522a9c29a654 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		53E4D00000000000000000A2 /* mermaid.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Resources/mermaid.min.js; sourceTree = "<group>"; };
+		93f90dab3128520a9bb6a252 /* mermaid.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Resources/mermaid.min.js; sourceTree = "<group>"; };
+		4a125de50cdd579988e7f48d /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareExtension/ShareViewController.swift; sourceTree = "<group>"; };
+		7fda10ce886552c69fd20a55 /* TriliumShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TriliumShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -77,16 +105,26 @@
 				37e78a6aade5504398a2f5fc /* SettingsView.swift */,
 				36124ab65b8c5e6ebdb5ec0f /* TreeView.swift */,
 				eaab85ea488d522a9c29a654 /* Assets.xcassets */,
-				53E4D00000000000000000A2 /* mermaid.min.js */,
+				93f90dab3128520a9bb6a252 /* mermaid.min.js */,
 			);
 			path = TriliumMobile;
+			sourceTree = "<group>";
+		};
+		f77b8147b60e5ab7a509d45c /* ShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				4a125de50cdd579988e7f48d /* ShareViewController.swift */,
+			);
+			path = ShareExtension;
 			sourceTree = "<group>";
 		};
 		cda30e0505a450c3a3554471 = {
 			isa = PBXGroup;
 			children = (
 				639c068bbbbf5c199463688d /* TriliumMobile */,
+				f77b8147b60e5ab7a509d45c /* ShareExtension */,
 				16e2e8000f285b40a0d23f25 /* TriliumMobile.app */,
+				7fda10ce886552c69fd20a55 /* TriliumShare.appex */,
 			);
 			sourceTree = "<group>";
 		};
@@ -100,15 +138,34 @@
 				aa4b26e0cdba544b84efebbf /* Sources */,
 				741d9c5e47305aea8a712839 /* Frameworks */,
 				682269dd23335645a578407e /* Resources */,
+				cd3a4c9567cb534aa6fd392e /* Embed Foundation */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				3599d600822c5e108374de9a /* PBXTargetDependency */,
 			);
 			name = TriliumMobile;
 			productName = TriliumMobile;
 			productReference = 16e2e8000f285b40a0d23f25 /* TriliumMobile.app */;
 			productType = "com.apple.product-type.application";
+		};
+		425e2dd58fb85360858c8e4f /* ShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9f3fd2cf93d55baeb3c1132e /* Build configuration list for PBXNativeTarget "ShareExtension" */;
+			buildPhases = (
+				9bb4b3b3dfe9505eb8777c44 /* Sources */,
+				61c5dd7c6dc75402bc036279 /* Frameworks */,
+				b08b5105fb4250fbac5aa037 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ShareExtension;
+			productName = ShareExtension;
+			productReference = 7fda10ce886552c69fd20a55 /* TriliumShare.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -121,6 +178,9 @@
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
 					35e123aee1ca5eebad44b2ad = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					425e2dd58fb85360858c8e4f = {
 						CreatedOnToolsVersion = 15.0;
 					};
 				};
@@ -139,6 +199,7 @@
 			projectRoot = "";
 			targets = (
 				35e123aee1ca5eebad44b2ad /* TriliumMobile */,
+				425e2dd58fb85360858c8e4f /* ShareExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -149,7 +210,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				4bb9ccdf258b582eb9bfd1f8 /* Assets.xcassets in Resources */,
-				53E4D00000000000000000A1 /* mermaid.min.js in Resources */,
+				80fe6bde9e155b9facc8c3d1 /* mermaid.min.js in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		b08b5105fb4250fbac5aa037 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -178,7 +246,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9bb4b3b3dfe9505eb8777c44 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				87d1f872efbf5b3c9a49ee58 /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		3599d600822c5e108374de9a /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 425e2dd58fb85360858c8e4f /* ShareExtension */;
+			targetProxy = ba415fe8e15d51318f24a615 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		6d04f360ad6e5711bd30d93d /* Debug */ = {
@@ -266,6 +350,54 @@
 			};
 			name = Release;
 		};
+		c75d66063f945080aebdb36a /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hhxxc.trilium.ShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		b7e58d93d884518489cc8631 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hhxxc.trilium.ShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -283,6 +415,15 @@
 			buildConfigurations = (
 				ecd3a538c9045d099e58617a /* Debug */,
 				a217599a4f1e54ebb7709079 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9f3fd2cf93d55baeb3c1132e /* Build configuration list for PBXNativeTarget "ShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				c75d66063f945080aebdb36a /* Debug */,
+				b7e58d93d884518489cc8631 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

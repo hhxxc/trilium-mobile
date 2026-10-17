@@ -53,6 +53,20 @@ struct RootView: View {
         .onChange(of: settings.isLoggedIn) { loggedIn in
             AppLogger.shared.log("isLoggedIn 变为 \(loggedIn)")
         }
+        // 分享扩展回传（trilium://quick-note?text=...）：直接进离线队列，断网也能收
+        .onOpenURL { url in
+            guard url.scheme == "trilium", url.host == "quick-note",
+                  let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  let text = comps.queryItems?.first(where: { $0.name == "text" })?.value,
+                  !text.isEmpty else { return }
+            NoteCache.shared.enqueue(PendingOp(kind: "create", id: UUID().uuidString,
+                noteId: "", title: text, content: nil, parentNoteId: nil, createdAt: Date()))
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            AppLogger.shared.log("分享收藏已入队：\(text.prefix(30))…")
+            if settings.isLoggedIn {
+                Task { await NoteCache.shared.flushPendingOps() }
+            }
+        }
     }
 
     /// 锁定遮罩：挡住全部内容，防后台截屏泄露

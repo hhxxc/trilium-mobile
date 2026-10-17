@@ -22,6 +22,23 @@ SWIFT_FILES = sorted(
     if name.endswith(".swift")
 )
 
+# 附加资源（如 mermaid.min.js）——进主 App 的 Resources phase，Bundle 里 Bundle.main 可读
+RES_FILES = sorted(
+    os.path.relpath(os.path.join(dp, name), _SWIFT_ROOT).replace("\\", "/")
+    for dp, _dirs, names in os.walk(_SWIFT_ROOT)
+    for name in names
+    if name.endswith(".js")
+)
+
+# 分享扩展源文件（独立 target）
+_EXT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ShareExtension")
+EXT_SWIFT_FILES = sorted(
+    os.path.relpath(os.path.join(dp, name), _EXT_ROOT).replace("\\", "/")
+    for dp, _dirs, names in os.walk(_EXT_ROOT)
+    for name in names
+    if name.endswith(".swift")
+)
+
 INFOPLIST = "Info.plist"
 ASSET_CATALOG = "Assets.xcassets"
 
@@ -46,11 +63,38 @@ proj_rel_id = oid("ProjRelease")
 tgt_dbg_id = oid("TargetDebug")
 tgt_rel_id = oid("TargetRelease")
 
+# 分享扩展 target
+ext_target_id = oid("ExtNativeTarget")
+ext_product_id = oid("Product.TriliumShare.appex")
+ext_sources_id = oid("ExtSourcesBuildPhase")
+ext_frameworks_id = oid("ExtFrameworksBuildPhase")
+ext_resources_id = oid("ExtResourcesBuildPhase")
+ext_group_id = oid("ShareExtensionGroup")
+ext_cl_id = oid("ExtTargetConfigList")
+ext_dbg_id = oid("ExtTargetDebug")
+ext_rel_id = oid("ExtTargetRelease")
+embed_id = oid("EmbedFoundationPhase")
+ext_appex_build_id = oid("BuildFile.TriliumShare.appex")
+ext_proxy_id = oid("ContainerItemProxy")
+ext_dep_id = oid("TargetDependency")
+
 file_ref_ids = {}
 build_file_ids = {}
 for f in SWIFT_FILES:
     file_ref_ids[f] = oid("FileRef." + f)
     build_file_ids[f] = oid("BuildFile." + f)
+
+ext_file_ref_ids = {}
+ext_build_file_ids = {}
+for f in EXT_SWIFT_FILES:
+    ext_file_ref_ids[f] = oid("ExtFileRef." + f)
+    ext_build_file_ids[f] = oid("ExtBuildFile." + f)
+
+res_ref_ids = {}
+res_build_ids = {}
+for f in RES_FILES:
+    res_ref_ids[f] = oid("ResRef." + f)
+    res_build_ids[f] = oid("ResBuild." + f)
 
 assets_ref_id = oid("FileRef." + ASSET_CATALOG)
 assets_build_id = oid("BuildFile." + ASSET_CATALOG)
@@ -66,6 +110,20 @@ build_files_txt = "".join(build_files)
 build_files_txt += (
     f'\t\t{assets_build_id} /* {ASSET_CATALOG} in Resources */ = {{isa = PBXBuildFile; fileRef = {assets_ref_id} /* {ASSET_CATALOG} */; }};\n'
 )
+for f in RES_FILES:
+    name = os.path.basename(f)
+    build_files_txt += (
+        f'\t\t{res_build_ids[f]} /* {name} in Resources */ = {{isa = PBXBuildFile; fileRef = {res_ref_ids[f]} /* {name} */; }};\n'
+    )
+# 分享扩展：源文件 BuildFile + appex 的 Embed BuildFile
+for f in EXT_SWIFT_FILES:
+    name = os.path.basename(f)
+    build_files_txt += (
+        f'\t\t{ext_build_file_ids[f]} /* {name} in Sources */ = {{isa = PBXBuildFile; fileRef = {ext_file_ref_ids[f]} /* {name} */; }};\n'
+    )
+build_files_txt += (
+    f'\t\t{ext_appex_build_id} /* TriliumShare.appex in Embed Foundation */ = {{isa = PBXBuildFile; fileRef = {ext_product_id} /* TriliumShare.appex */; settings = {{ATTRIBUTES = (RemoveHeadersOnCopy, ); }}; }};\n'
+)
 
 # ---- PBXFileReference ----
 file_refs = []
@@ -80,6 +138,19 @@ file_refs.append(
 file_refs.append(
     f'\t\t{assets_ref_id} /* {ASSET_CATALOG} */ = {{isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = {ASSET_CATALOG}; sourceTree = "<group>"; }};\n'
 )
+for f in RES_FILES:
+    name = os.path.basename(f)
+    file_refs.append(
+        f'\t\t{res_ref_ids[f]} /* {name} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = {f}; sourceTree = "<group>"; }};\n'
+    )
+for f in EXT_SWIFT_FILES:
+    name = os.path.basename(f)
+    file_refs.append(
+        f'\t\t{ext_file_ref_ids[f]} /* {name} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareExtension/{f}; sourceTree = "<group>"; }};\n'
+    )
+file_refs.append(
+    f'\t\t{ext_product_id} /* TriliumShare.appex */ = {{isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TriliumShare.appex; sourceTree = BUILT_PRODUCTS_DIR; }};\n'
+)
 file_refs_txt = "".join(file_refs)
 
 # ---- PBXGroup ----
@@ -87,6 +158,8 @@ group_children = ",\n".join(
     f"\t\t\t\t{file_ref_ids[f]} /* {os.path.basename(f)} */" for f in SWIFT_FILES
 )
 group_children += f",\n\t\t\t\t{assets_ref_id} /* {ASSET_CATALOG} */"
+for f in RES_FILES:
+    group_children += f",\n\t\t\t\t{res_ref_ids[f]} /* {os.path.basename(f)} */"
 app_group = (
     f'\t\t{app_group_id} /* TriliumMobile */ = {{\n'
     f'\t\t\tisa = PBXGroup;\n'
@@ -96,17 +169,31 @@ app_group = (
     f'\t\t\tsourceTree = "<group>";\n'
     f'\t\t}};\n'
 )
+ext_group_children = ",\n".join(
+    f"\t\t\t\t{ext_file_ref_ids[f]} /* {os.path.basename(f)} */" for f in EXT_SWIFT_FILES
+)
+ext_group = (
+    f'\t\t{ext_group_id} /* ShareExtension */ = {{\n'
+    f'\t\t\tisa = PBXGroup;\n'
+    f'\t\t\tchildren = (\n{ext_group_children},\n'
+    f'\t\t\t);\n'
+    f'\t\t\tpath = ShareExtension;\n'
+    f'\t\t\tsourceTree = "<group>";\n'
+    f'\t\t}};\n'
+)
 main_group = (
     f'\t\t{main_group_id} = {{\n'
     f'\t\t\tisa = PBXGroup;\n'
     f'\t\t\tchildren = (\n'
     f'\t\t\t\t{app_group_id} /* TriliumMobile */,\n'
+    f'\t\t\t\t{ext_group_id} /* ShareExtension */,\n'
     f'\t\t\t\t{product_id} /* TriliumMobile.app */,\n'
+    f'\t\t\t\t{ext_product_id} /* TriliumShare.appex */,\n'
     f'\t\t\t);\n'
     f'\t\t\tsourceTree = "<group>";\n'
     f'\t\t}};\n'
 )
-groups_txt = app_group + main_group
+groups_txt = app_group + ext_group + main_group
 
 # ---- PBXNativeTarget ----
 target_txt = (
@@ -117,15 +204,37 @@ target_txt = (
     f'\t\t\t\t{sources_id} /* Sources */,\n'
     f'\t\t\t\t{frameworks_id} /* Frameworks */,\n'
     f'\t\t\t\t{resources_id} /* Resources */,\n'
+    f'\t\t\t\t{embed_id} /* Embed Foundation */,\n'
     f'\t\t\t);\n'
     f'\t\t\tbuildRules = (\n'
     f'\t\t\t);\n'
     f'\t\t\tdependencies = (\n'
+    f'\t\t\t\t{ext_dep_id} /* PBXTargetDependency */,\n'
     f'\t\t\t);\n'
     f'\t\t\tname = TriliumMobile;\n'
     f'\t\t\tproductName = TriliumMobile;\n'
     f'\t\t\tproductReference = {product_id} /* TriliumMobile.app */;\n'
     f'\t\t\tproductType = "com.apple.product-type.application";\n'
+    f'\t\t}};\n'
+)
+
+ext_target_txt = (
+    f'\t\t{ext_target_id} /* ShareExtension */ = {{\n'
+    f'\t\t\tisa = PBXNativeTarget;\n'
+    f'\t\t\tbuildConfigurationList = {ext_cl_id} /* Build configuration list for PBXNativeTarget "ShareExtension" */;\n'
+    f'\t\t\tbuildPhases = (\n'
+    f'\t\t\t\t{ext_sources_id} /* Sources */,\n'
+    f'\t\t\t\t{ext_frameworks_id} /* Frameworks */,\n'
+    f'\t\t\t\t{ext_resources_id} /* Resources */,\n'
+    f'\t\t\t);\n'
+    f'\t\t\tbuildRules = (\n'
+    f'\t\t\t);\n'
+    f'\t\t\tdependencies = (\n'
+    f'\t\t\t);\n'
+    f'\t\t\tname = ShareExtension;\n'
+    f'\t\t\tproductName = ShareExtension;\n'
+    f'\t\t\tproductReference = {ext_product_id} /* TriliumShare.appex */;\n'
+    f'\t\t\tproductType = "com.apple.product-type.app-extension";\n'
     f'\t\t}};\n'
 )
 
@@ -139,6 +248,9 @@ project_txt = (
     f'\t\t\t\tLastUpgradeCheck = 1500;\n'
     f'\t\t\t\tTargetAttributes = {{\n'
     f'\t\t\t\t\t{target_id} = {{\n'
+    f'\t\t\t\t\t\tCreatedOnToolsVersion = 15.0;\n'
+    f'\t\t\t\t\t}};\n'
+    f'\t\t\t\t\t{ext_target_id} = {{\n'
     f'\t\t\t\t\t\tCreatedOnToolsVersion = 15.0;\n'
     f'\t\t\t\t\t}};\n'
     f'\t\t\t\t}};\n'
@@ -157,6 +269,7 @@ project_txt = (
     f'\t\t\tprojectRoot = "";\n'
     f'\t\t\ttargets = (\n'
     f'\t\t\t\t{target_id} /* TriliumMobile */,\n'
+    f'\t\t\t\t{ext_target_id} /* ShareExtension */,\n'
     f'\t\t\t);\n'
     f'\t\t}};\n'
 )
@@ -175,6 +288,34 @@ sources_txt = (
     f'\t\t}};\n'
 )
 
+ext_sources_children = ",\n".join(
+    f"\t\t\t\t{ext_build_file_ids[f]} /* {os.path.basename(f)} in Sources */" for f in EXT_SWIFT_FILES
+)
+ext_sources_txt = (
+    f'\t\t{ext_sources_id} /* Sources */ = {{\n'
+    f'\t\t\tisa = PBXSourcesBuildPhase;\n'
+    f'\t\t\tbuildActionMask = 2147483647;\n'
+    f'\t\t\tfiles = (\n{ext_sources_children},\n'
+    f'\t\t\t);\n'
+    f'\t\t\trunOnlyForDeploymentPostprocessing = 0;\n'
+    f'\t\t}};\n'
+)
+
+# Embed Foundation：把 .appex 塞进宿主 App（PlugIns/）
+embed_txt = (
+    f'\t\t{embed_id} /* Embed Foundation */ = {{\n'
+    f'\t\t\tisa = PBXCopyFilesBuildPhase;\n'
+    f'\t\t\tbuildActionMask = 2147483647;\n'
+    f'\t\t\tdstPath = "";\n'
+    f'\t\t\tdstSubfolderSpec = 13;\n'
+    f'\t\t\tfiles = (\n'
+    f'\t\t\t\t{ext_appex_build_id} /* TriliumShare.appex in Embed Foundation */,\n'
+    f'\t\t\t);\n'
+    f'\t\t\tname = "Embed Foundation";\n'
+    f'\t\t\trunOnlyForDeploymentPostprocessing = 0;\n'
+    f'\t\t}};\n'
+)
+
 # ---- Frameworks / Resources ----
 frameworks_txt = (
     f'\t\t{frameworks_id} /* Frameworks */ = {{\n'
@@ -185,12 +326,25 @@ frameworks_txt = (
     f'\t\t\trunOnlyForDeploymentPostprocessing = 0;\n'
     f'\t\t}};\n'
 )
+resources_children = "".join(
+    f"\t\t\t\t{res_build_ids[f]} /* {os.path.basename(f)} in Resources */,\n" for f in RES_FILES
+)
 resources_txt = (
     f'\t\t{resources_id} /* Resources */ = {{\n'
     f'\t\t\tisa = PBXResourcesBuildPhase;\n'
     f'\t\t\tbuildActionMask = 2147483647;\n'
     f'\t\t\tfiles = (\n'
     f'\t\t\t\t{assets_build_id} /* {ASSET_CATALOG} in Resources */,\n'
+    f'{resources_children}'
+    f'\t\t\t);\n'
+    f'\t\t\trunOnlyForDeploymentPostprocessing = 0;\n'
+    f'\t\t}};\n'
+)
+ext_resources_txt = (
+    f'\t\t{ext_resources_id} /* Resources */ = {{\n'
+    f'\t\t\tisa = PBXResourcesBuildPhase;\n'
+    f'\t\t\tbuildActionMask = 2147483647;\n'
+    f'\t\t\tfiles = (\n'
     f'\t\t\t);\n'
     f'\t\t\trunOnlyForDeploymentPostprocessing = 0;\n'
     f'\t\t}};\n'
@@ -294,6 +448,61 @@ target_release = (
 
 configs_txt = proj_debug + proj_release + target_debug + target_release
 
+# 分享扩展 target 配置（无 entitlements：URL scheme 方案；SKIP_INSTALL 必须 YES）
+ext_tgt_debug = (
+    f'\t\t{ext_dbg_id} /* Debug */ = {{\n'
+    f'\t\t\tisa = XCBuildConfiguration;\n'
+    f'\t\t\tbuildSettings = {{\n'
+    f'\t\t\t\tCODE_SIGN_STYLE = Automatic;\n'
+    f'\t\t\t\tCURRENT_PROJECT_VERSION = 1;\n'
+    f'\t\t\t\tDEVELOPMENT_TEAM = "";\n'
+    f'\t\t\t\tGENERATE_INFOPLIST_FILE = NO;\n'
+    f'\t\t\t\tINFOPLIST_FILE = ShareExtension/Info.plist;\n'
+    f'\t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 15.1;\n'
+    f'\t\t\t\tLD_RUNPATH_SEARCH_PATHS = (\n'
+    f'\t\t\t\t\t"$(inherited)",\n'
+    f'\t\t\t\t\t"@executable_path/Frameworks",\n'
+    f'\t\t\t\t\t"@executable_path/../../Frameworks",\n'
+    f'\t\t\t\t);\n'
+    f'\t\t\t\tMARKETING_VERSION = 1.0.0;\n'
+    f'\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.hhxxc.trilium.ShareExtension;\n'
+    f'\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";\n'
+    f'\t\t\t\tSKIP_INSTALL = YES;\n'
+    f'\t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;\n'
+    f'\t\t\t\tSWIFT_VERSION = 5.0;\n'
+    f'\t\t\t\tTARGETED_DEVICE_FAMILY = "1,2";\n'
+    f'\t\t\t}};\n'
+    f'\t\t\tname = Debug;\n'
+    f'\t\t}};\n'
+)
+ext_tgt_release = (
+    f'\t\t{ext_rel_id} /* Release */ = {{\n'
+    f'\t\t\tisa = XCBuildConfiguration;\n'
+    f'\t\t\tbuildSettings = {{\n'
+    f'\t\t\t\tCODE_SIGN_STYLE = Automatic;\n'
+    f'\t\t\t\tCURRENT_PROJECT_VERSION = 1;\n'
+    f'\t\t\t\tDEVELOPMENT_TEAM = "";\n'
+    f'\t\t\t\tGENERATE_INFOPLIST_FILE = NO;\n'
+    f'\t\t\t\tINFOPLIST_FILE = ShareExtension/Info.plist;\n'
+    f'\t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 15.1;\n'
+    f'\t\t\t\tLD_RUNPATH_SEARCH_PATHS = (\n'
+    f'\t\t\t\t\t"$(inherited)",\n'
+    f'\t\t\t\t\t"@executable_path/Frameworks",\n'
+    f'\t\t\t\t\t"@executable_path/../../Frameworks",\n'
+    f'\t\t\t\t);\n'
+    f'\t\t\t\tMARKETING_VERSION = 1.0.0;\n'
+    f'\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.hhxxc.trilium.ShareExtension;\n'
+    f'\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";\n'
+    f'\t\t\t\tSKIP_INSTALL = YES;\n'
+    f'\t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;\n'
+    f'\t\t\t\tSWIFT_VERSION = 5.0;\n'
+    f'\t\t\t\tTARGETED_DEVICE_FAMILY = "1,2";\n'
+    f'\t\t\t}};\n'
+    f'\t\t\tname = Release;\n'
+    f'\t\t}};\n'
+)
+configs_txt += ext_tgt_debug + ext_tgt_release
+
 # ---- XCConfigurationList ----
 lists_txt = (
     f'\t\t{proj_cl_id} /* Build configuration list for PBXProject "TriliumMobile" */ = {{\n'
@@ -314,6 +523,15 @@ lists_txt = (
     f'\t\t\tdefaultConfigurationIsVisible = 0;\n'
     f'\t\t\tdefaultConfigurationName = Release;\n'
     f'\t\t}};\n'
+    f'\t\t{ext_cl_id} /* Build configuration list for PBXNativeTarget "ShareExtension" */ = {{\n'
+    f'\t\t\tisa = XCConfigurationList;\n'
+    f'\t\t\tbuildConfigurations = (\n'
+    f'\t\t\t\t{ext_dbg_id} /* Debug */,\n'
+    f'\t\t\t\t{ext_rel_id} /* Release */,\n'
+    f'\t\t\t);\n'
+    f'\t\t\tdefaultConfigurationIsVisible = 0;\n'
+    f'\t\t\tdefaultConfigurationName = Release;\n'
+    f'\t\t}};\n'
 )
 
 pbxproj = (
@@ -327,6 +545,18 @@ pbxproj = (
     '/* Begin PBXBuildFile section */\n'
     f'{build_files_txt}'
     '/* End PBXBuildFile section */\n\n'
+    '/* Begin PBXContainerItemProxy section */\n'
+    f'\t\t{ext_proxy_id} /* PBXContainerItemProxy */ = {{\n'
+    f'\t\t\tisa = PBXContainerItemProxy;\n'
+    f'\t\t\tcontainerPortal = {project_id} /* Project object */;\n'
+    f'\t\t\tproxyType = 1;\n'
+    f'\t\t\tremoteGlobalIDString = {ext_target_id};\n'
+    f'\t\t\tremoteInfo = ShareExtension;\n'
+    f'\t\t}};\n'
+    '/* End PBXContainerItemProxy section */\n\n'
+    '/* Begin PBXCopyFilesBuildPhase section */\n'
+    f'{embed_txt}'
+    '/* End PBXCopyFilesBuildPhase section */\n\n'
     '/* Begin PBXFileReference section */\n'
     f'{file_refs_txt}'
     '/* End PBXFileReference section */\n\n'
@@ -338,16 +568,26 @@ pbxproj = (
     '/* End PBXGroup section */\n\n'
     '/* Begin PBXNativeTarget section */\n'
     f'{target_txt}'
+    f'{ext_target_txt}'
     '/* End PBXNativeTarget section */\n\n'
     '/* Begin PBXProject section */\n'
     f'{project_txt}'
     '/* End PBXProject section */\n\n'
     '/* Begin PBXResourcesBuildPhase section */\n'
     f'{resources_txt}'
+    f'{ext_resources_txt}'
     '/* End PBXResourcesBuildPhase section */\n\n'
     '/* Begin PBXSourcesBuildPhase section */\n'
     f'{sources_txt}'
+    f'{ext_sources_txt}'
     '/* End PBXSourcesBuildPhase section */\n\n'
+    '/* Begin PBXTargetDependency section */\n'
+    f'\t\t{ext_dep_id} /* PBXTargetDependency */ = {{\n'
+    f'\t\t\tisa = PBXTargetDependency;\n'
+    f'\t\t\ttarget = {ext_target_id} /* ShareExtension */;\n'
+    f'\t\t\ttargetProxy = {ext_proxy_id} /* PBXContainerItemProxy */;\n'
+    f'\t\t}};\n'
+    '/* End PBXTargetDependency section */\n\n'
     '/* Begin XCBuildConfiguration section */\n'
     f'{configs_txt}'
     '/* End XCBuildConfiguration section */\n\n'

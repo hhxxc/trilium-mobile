@@ -124,7 +124,9 @@ jobs:
           APP="build/dd/Build/Products/Release-iphoneos/TriliumMobile.app"
           mkdir -p Payload
           cp -r "$APP" Payload/
-          codesign --force --sign - --entitlements TriliumMobile/TriliumMobile.entitlements Payload/TriliumMobile.app
+          # --deep：连 PlugIns/TriliumShare.appex 一起签（先内后外）
+          codesign --force --deep --sign - --entitlements TriliumMobile/TriliumMobile.entitlements Payload/TriliumMobile.app
+          test -d Payload/TriliumMobile.app/PlugIns/TriliumShare.appex || { echo "::error::分享扩展未嵌入"; exit 1; }
           rm -rf build/dd
           zip -r "$IPA_NAME" Payload
           rm -rf Payload
