@@ -10,24 +10,30 @@ struct NoteDetailView: View {
     @State private var textContent: String = ""
     @State private var imageData: Data?
     @State private var loading = true
+    @State private var hasLoadedOnce = false
     @State private var errorMsg = ""
     @State private var showEditor = false
+    /// 编辑改标题后的最新标题（note 是 let，PATCH 后靠这里刷新显示）
+    @State private var freshTitle: String = ""
+    @State private var freshType: String = ""
+
+    private var displayTitle: String { freshTitle.isEmpty ? note.title : freshTitle }
 
     var body: some View {
         Group {
-            if loading {
+            if loading && !hasLoadedOnce { // 编辑返回的静默刷新不闪全屏 loading
                 ProgressView("加载中…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !errorMsg.isEmpty {
                 VStack(spacing: 12) {
                     Text(errorMsg).font(.footnote).foregroundColor(.secondary)
-                    Button("重试") { Task { await load() } }
+                    Button("重试") { Task { await load(force: true) } }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 content
             }
         }
-        .navigationTitle(note.title.isEmpty ? "笔记" : note.title)
+        .navigationTitle(displayTitle.isEmpty ? "笔记" : displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -36,7 +42,8 @@ struct NoteDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $showEditor, onDismiss: { Task { await load() } }) {
+        // ⚠️ 编辑返回必须 force 刷新：普通 load() 会命中本地缓存显示**旧内容**（编辑白改）
+        .sheet(isPresented: $showEditor, onDismiss: { Task { await load(force: true) } }) {
             NativeEditorView(note: note, initialContent: textContent)
         }
         .task { await load() }
@@ -94,20 +101,27 @@ struct NoteDetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func load() async {
-        loading = true
+    /// force=true：跳过缓存直拉网络（编辑保存后必须用，否则读到旧缓存）
+    private func load(force: Bool = false) async {
+        if !force { loading = true } // 静默刷新不置 loading，保留屏上旧内容
         do {
+            if force {
+                // 顺带拉最新元数据：编辑器里改过标题/类型时同步显示
+                if let fresh = try await ETAPIClient.shared.getNote(note.noteId) {
+                    freshTitle = fresh.title
+                    freshType = fresh.type
+                }
+            }
             switch note.type {
             case "image":
-                // 优先缓存，再走网络
-                if let cached = NoteCache.shared.loadBlob(note.noteId) {
+                if !force, let cached = NoteCache.shared.loadBlob(note.noteId) {
                     imageData = cached
                 } else if let data = try? await ETAPIClient.shared.getContentData(note.noteId) {
                     imageData = data
                     NoteCache.shared.saveBlob(note.noteId, data: data)
                 }
             case "text", "code", "render":
-                if let cached = NoteCache.shared.loadContent(note.noteId) {
+                if !force, let cached = NoteCache.shared.loadContent(note.noteId) {
                     textContent = cached
                 } else {
                     let raw = try await ETAPIClient.shared.getContent(note.noteId)
@@ -119,8 +133,14 @@ struct NoteDetailView: View {
             }
             errorMsg = ""
         } catch {
-            errorMsg = "加载失败：\(error.localizedDescription)"
+            // 静默刷新失败且屏上已有内容：不打断阅读，只记日志
+            let hasContent = !textContent.isEmpty || imageData != nil
+            if !(force && hasContent) {
+                errorMsg = "加载失败：\(error.localizedDescription)"
+            }
+            AppLogger.shared.log("阅读[\(note.title)]加载失败: \(error.localizedDescription)")
         }
+        hasLoadedOnce = true
         loading = false
     }
 }

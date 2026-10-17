@@ -7,6 +7,9 @@ struct TreeView: View {
     @State private var children: [Note] = []
     @State private var loading = false
     @State private var errorMsg = ""
+    /// 层级缓存：parentId → 子笔记列表。返回上级/重复进入秒开，不再重新拉网络。
+    /// sheet 关闭后 @State 重建自然清空，不会占内存。
+    @State private var layerCache: [String: [Note]] = [:]
 
     var body: some View {
         NavigationView {
@@ -45,25 +48,14 @@ struct TreeView: View {
         .navigationViewStyle(.stack)
     }
 
-    /// 可展开的「容器」：有子笔记，或 search 类型。
-    /// ⚠️ 旧判断 `type != "text"` 是错的：code/image/file 笔记会被当文件夹，
-    /// 点进去拉不到子笔记显示空列表；而 text 笔记也可能是容器（Trilium 任意笔记可有子笔记）。
+    /// 可展开的「容器」：复用 Note.isContainer 的类型判断，另加「有子笔记」
+    ///（text 也可以是容器——Trilium 任意笔记可有子笔记）。
+    /// ⚠️ 旧判断 `type != "text"` 是错的：code/image/file 笔记会被当文件夹，点进去全是空列表。
     private func isContainer(_ note: Note) -> Bool {
-        if note.type == "search" { return true }
-        return !(note.childNoteIds ?? []).isEmpty
+        note.isContainer || !(note.childNoteIds ?? []).isEmpty
     }
 
-    /// 叶子笔记图标按类型区分
-    private func icon(for note: Note) -> String {
-        switch note.type {
-        case "code": return "chevron.left.forwardslash.chevron.right"
-        case "image": return "photo"
-        case "file": return "paperclip"
-        default: return "doc.text"
-        }
-    }
-
-    /// 容器可点击展开下一层；叶子笔记打开阅读页
+    /// 容器可点击展开下一层；叶子笔记打开阅读页（图标/颜色与首页列表行统一）
     @ViewBuilder
     private func row(for note: Note) -> some View {
         if isContainer(note) {
@@ -71,21 +63,31 @@ struct TreeView: View {
                 stack.append((note.noteId, note.title))
                 Task { await loadCurrent() }
             } label: {
-                Label(note.title.isEmpty ? "（无标题）" : note.title, systemImage: "folder")
+                Label(note.title.isEmpty ? "（无标题）" : note.title, systemImage: NoteRow.icon(for: note.type))
                     .foregroundColor(.primary)
             }
         } else {
             NavigationLink(destination: NoteDetailView(note: note)) {
-                Label(note.title.isEmpty ? "（无标题）" : note.title, systemImage: icon(for: note))
+                Label(note.title.isEmpty ? "（无标题）" : note.title, systemImage: NoteRow.icon(for: note.type))
+                    .foregroundColor(NoteRow.iconColor(for: note.type))
             }
         }
     }
 
     private func loadCurrent() async {
+        let parentId = stack.last!.id
+        // 命中缓存直接渲染，零等待
+        if let cached = layerCache[parentId], !cached.isEmpty {
+            children = cached
+            errorMsg = ""
+            return
+        }
         loading = true
         do {
             // 用参数化 childNotes 一次拉直接子笔记（旧版逐个 getNote 是 N+1，慢且可能漏）
-            children = try await ETAPIClient.shared.childNotes(of: stack.last!.id)
+            let fetched = try await ETAPIClient.shared.childNotes(of: parentId)
+            children = fetched
+            layerCache[parentId] = fetched
             errorMsg = ""
         } catch {
             errorMsg = "加载失败：\(error.localizedDescription)"

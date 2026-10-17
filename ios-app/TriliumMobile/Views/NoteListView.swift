@@ -8,6 +8,12 @@ struct NoteListView: View {
     @State private var errorMsg = ""
     @State private var showCompose = false
     @State private var searchQuery = ""
+    /// 加载代数：并发触发 load（防抖任务 + 下拉刷新）时丢弃过期响应，防旧结果覆盖新结果
+    @State private var loadGeneration = 0
+
+    private var isSearching: Bool {
+        !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -58,14 +64,42 @@ struct NoteListView: View {
                 if !errorMsg.isEmpty {
                     Text(errorMsg).font(.footnote).foregroundColor(.secondary)
                 }
-                ForEach(notes) { note in
-                    NavigationLink(destination: NoteDetailView(note: note)) {
-                        NoteRow(note: note)
+                if isSearching {
+                    // 搜索结果平铺（分组反而碍事）
+                    ForEach(notes) { note in
+                        NavigationLink(destination: NoteDetailView(note: note)) {
+                            NoteRow(note: note)
+                        }
+                    }
+                } else {
+                    // 浏览模式按时间分组（有道云风格）
+                    ForEach(timeGroups.filter { !$0.notes.isEmpty }, id: \.title) { g in
+                        Section(g.title) {
+                            ForEach(g.notes) { note in
+                                NavigationLink(destination: NoteDetailView(note: note)) {
+                                    NoteRow(note: note)
+                                }
+                            }
+                        }
                     }
                 }
             }
             .listStyle(.plain)
         }
+    }
+
+    /// 按修改时间分组：今天 / 昨天 / 本周 / 更早（依赖服务端已按 dateModified desc 排序）
+    private var timeGroups: [(title: String, notes: [Note])] {
+        let cal = Calendar.current
+        var today: [Note] = [], yesterday: [Note] = [], week: [Note] = [], earlier: [Note] = []
+        for n in notes {
+            guard let d = n.modifiedDate else { earlier.append(n); continue }
+            if cal.isDateInToday(d) { today.append(n) }
+            else if cal.isDateInYesterday(d) { yesterday.append(n) }
+            else if cal.isDate(d, equalTo: Date(), toGranularity: .weekOfYear) { week.append(n) }
+            else { earlier.append(n) }
+        }
+        return [("今天", today), ("昨天", yesterday), ("本周", week), ("更早", earlier)]
     }
 
     private var composeButton: some View {
@@ -83,17 +117,24 @@ struct NoteListView: View {
 
     private func load() async {
         loading = true
+        loadGeneration += 1
+        let gen = loadGeneration
         do {
             let q = searchQuery.trimmingCharacters(in: .whitespaces)
+            let result: [Note]
             if q.isEmpty {
-                notes = try await ETAPIClient.shared.recentNotes()
-                NoteCache.shared.saveRecentNotes(notes) // 缓存，离线可看
+                result = try await ETAPIClient.shared.recentNotes()
+                NoteCache.shared.saveRecentNotes(result) // 缓存，离线可看
             } else {
-                notes = try await ETAPIClient.shared.searchNotes(q)
+                result = try await ETAPIClient.shared.searchNotes(q)
             }
-            AppLogger.shared.log("列表加载完成：\(notes.count) 条")
+            // 已有更新的加载在进行中：丢弃本批结果（loading/notes 由最新调用收尾）
+            guard gen == loadGeneration else { return }
+            notes = result
+            AppLogger.shared.log("列表加载完成：\(result.count) 条")
             errorMsg = ""
         } catch {
+            guard gen == loadGeneration else { return }
             AppLogger.shared.log("列表加载失败: \(error.localizedDescription)")
             // 网络失败时回退缓存（离线可看）
             if let cached = NoteCache.shared.loadRecentNotes(), !cached.isEmpty {

@@ -52,12 +52,15 @@ struct Note: Codable, Identifiable, Equatable {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
     }()
 
+    /// dateModified 解析成本地 Date（分组/相对时间共用；解析失败返回 nil）
+    var modifiedDate: Date? {
+        guard let raw = dateModified, !raw.isEmpty else { return nil }
+        return Self.isoParser.date(from: raw) ?? Self.isoParserNoFrac.date(from: raw)
+    }
+
     /// 列表展示的友好时间：今天 HH:mm，昨天「昨天」，更早日期（本地时区，修正 UTC+8 差 8 小时）
     var friendlyModified: String {
-        guard let raw = dateModified, !raw.isEmpty,
-              let d = Self.isoParser.date(from: raw) ?? Self.isoParserNoFrac.date(from: raw) else {
-            return modifiedDisplay
-        }
+        guard let d = modifiedDate else { return modifiedDisplay }
         let cal = Calendar.current
         if cal.isDateInToday(d) { return Self.timeFormatter.string(from: d) }
         if cal.isDateInYesterday(d) { return "昨天" }
