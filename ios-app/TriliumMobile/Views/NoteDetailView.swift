@@ -220,7 +220,9 @@ struct NativeEditorView: View {
 
 /// HTML 包装工具（抽离，供阅读页复用）
 enum NoteHTML {
-    static func wrap(title: String, raw: String, noteType: String) -> String {
+    /// fontScale：阅读页字号缩放（1.0 = 17px 标准）
+    static func wrap(title: String, raw: String, noteType: String, fontScale: Double = 1.0) -> String {
+        let fontSize = Int((17 * fontScale).rounded())
         let escapedTitle = title
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
@@ -263,7 +265,7 @@ enum NoteHTML {
           * { box-sizing: border-box; }
           body {
             font-family: -apple-system, "PingFang SC", sans-serif;
-            font-size: 17px; line-height: 1.75; color: #1c1c1e;
+            font-size: \(fontSize)px; line-height: 1.75; color: #1c1c1e;
             margin: 0; padding: 16px 18px 60px;
             word-wrap: break-word; -webkit-text-size-adjust: 100%;
           }

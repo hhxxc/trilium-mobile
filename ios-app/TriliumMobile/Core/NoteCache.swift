@@ -66,6 +66,14 @@ final class NoteCache {
         try? Data(contentsOf: blobURL(noteId))
     }
 
+    // MARK: - 单笔记清理
+
+    /// 删除笔记后清掉它的本地缓存（内容 + 二进制）
+    func remove(_ noteId: String) {
+        try? fm.removeItem(at: contentURL(noteId))
+        try? fm.removeItem(at: blobURL(noteId))
+    }
+
     // MARK: - 清理
 
     func clearAll() {

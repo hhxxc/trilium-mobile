@@ -9,6 +9,12 @@ final class AppSettings: ObservableObject {
         static let token = "trilium.token"
         static let inboxNoteId = "trilium.inboxNoteId"
         static let inboxTitle = "trilium.inboxTitle"
+        static let readerFontScale = "trilium.readerFontScale"
+    }
+
+    /// 阅读页字号缩放（1.0 = 标准；详情页 Aa 菜单调节，持久化）
+    @Published var readerFontScale: Double {
+        didSet { UserDefaults.standard.set(readerFontScale, forKey: Keys.readerFontScale) }
     }
 
     @Published var server: String {
@@ -45,6 +51,7 @@ final class AppSettings: ObservableObject {
         token = savedToken
         inboxNoteId = d.string(forKey: Keys.inboxNoteId) ?? ""
         inboxTitle = d.string(forKey: Keys.inboxTitle) ?? AppConfig.defaultInboxTitle
+        readerFontScale = d.object(forKey: Keys.readerFontScale) as? Double ?? 1.0
         isLoggedIn = !savedToken.isEmpty  // 用局部变量，避免 init 里访问 self.token 的初始化顺序问题
     }
 

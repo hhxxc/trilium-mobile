@@ -137,6 +137,11 @@ struct ETAPIClient {
         return try JSONDecoder().decode(Note.self, from: data)
     }
 
+    /// 删除笔记（Trilium 语义：标记 deleted，子笔记级联）
+    func deleteNote(_ id: String) async throws {
+        _ = try await raw("/etapi/notes/\(id)", method: "DELETE")
+    }
+
     func createNote(parentNoteId: String, title: String, content: String = "", type: String = "text") async throws -> CreateNoteResponse {
         var dict: [String: Any] = ["parentNoteId": parentNoteId, "title": title, "type": type]
         if type == "text" { dict["mime"] = "text/html" }
@@ -161,9 +166,15 @@ struct ETAPIClient {
         return (try? JSONDecoder().decode([Note].self, from: data)) ?? []
     }
 
-    /// 最近修改的笔记：参数化排序（orderBy=dateModified + orderDirection=desc + limit）
+    /// 「匹配所有笔记」的搜索表达式。
+    /// ⚠️ 服务端校验 search 必须 trim 后非空（空串 400，服务端日志铁证：
+    ///   "'search' query parameter is mandatory"）。
+    /// 用官方属性比较语法 note.noteId != '…' 恒真，即匹配全部笔记。
+    private static let matchAll = "note.noteId != 'zzz_no_match_zzz'"
+
+    /// 最近修改的笔记：属性表达式匹配全部 + 参数化排序
     func recentNotes(limit: Int = 30) async throws -> [Note] {
-        var q = [URLQueryItem(name: "search", value: "")]
+        var q = [URLQueryItem(name: "search", value: Self.matchAll)]
         q.append(URLQueryItem(name: "orderBy", value: "dateModified"))
         q.append(URLQueryItem(name: "orderDirection", value: "desc"))
         q.append(URLQueryItem(name: "limit", value: String(limit)))
@@ -174,9 +185,9 @@ struct ETAPIClient {
         return (try? JSONDecoder().decode([Note].self, from: data)) ?? []
     }
 
-    /// 子树下的直接子笔记（树的展开用；参数化，不走搜索语法）
+    /// 子树下的直接子笔记（树的展开用；ancestorDepth=eq1 表示仅直接子级）
     func childNotes(of parentId: String) async throws -> [Note] {
-        var q = [URLQueryItem(name: "search", value: "")]
+        var q = [URLQueryItem(name: "search", value: Self.matchAll)]
         q.append(URLQueryItem(name: "ancestorNoteId", value: parentId))
         q.append(URLQueryItem(name: "ancestorDepth", value: "eq1"))
         q.append(URLQueryItem(name: "orderBy", value: "title"))
