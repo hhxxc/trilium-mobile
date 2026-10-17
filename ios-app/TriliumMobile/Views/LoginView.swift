@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 /// 登录页：服务器地址 + 密码 → 换 ETAPI token
 struct LoginView: View {
@@ -8,6 +9,8 @@ struct LoginView: View {
     @State private var password: String = ""
     @State private var status: String = ""
     @State private var busy = false
+    /// 证书/网络类失败时给一个「切内网地址」的快捷入口
+    @State private var showLANShortcut = false
 
     var body: some View {
         NavigationView {
@@ -33,6 +36,17 @@ struct LoginView: View {
                 if !status.isEmpty {
                     Section { Text(status).font(.footnote).foregroundColor(.secondary) }
                 }
+                if showLANShortcut {
+                    Section {
+                        Button {
+                            server = "http://192.168.31.198:18190"
+                            status = "已切到内网地址，点「登录」重试（需与 NAS 在同一 Wi-Fi）"
+                            showLANShortcut = false
+                        } label: {
+                            Label("改用内网地址", systemImage: "wifi")
+                        }
+                    }
+                }
                 Section(footer: Text("默认走 ddnsto 公网，家内外通用；在家可改内网 http://192.168.31.198:18190 更快。")) {
                     EmptyView()
                 }
@@ -55,8 +69,10 @@ struct LoginView: View {
                 password = ""
                 status = ""
             } catch {
-                let hint: String
+                showLANShortcut = false
+                let ns = error as NSError
                 if let api = error as? APIError {
+                    let hint: String
                     switch api {
                     case .http(let code):
                         hint = code == 401 ? "（密码不对）"
@@ -64,8 +80,26 @@ struct LoginView: View {
                     default: hint = ""
                     }
                     status = "登录失败：\(api.localizedDescription)\(hint)"
+                } else if ns.domain == NSURLErrorDomain {
+                    // 证书类错误单独说清楚：内网穿透的证书到期时，报错原文是
+                    // "An SSL error has occurred…"，用户根本看不懂发生了什么
+                    switch URLError.Code(rawValue: ns.code) {
+                    case .secureConnectionFailed, .serverCertificateHasBadDate,
+                         .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+                         .serverCertificateNotYetValid:
+                        status = "登录失败：服务器证书无效或已过期（内网穿透证书到期时会这样）。可以先用内网地址登录，或等证书续期后再切回公网地址。"
+                        showLANShortcut = true
+                    case .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+                         .notConnectedToInternet, .dnsLookupFailed:
+                        status = "登录失败：连不上服务器（检查网络，或改用内网地址）"
+                        showLANShortcut = true
+                    case .timedOut:
+                        status = "登录失败：连接超时，服务端没有响应"
+                    default:
+                        status = "登录失败：\(error.localizedDescription)"
+                    }
                 } else {
-                    status = "登录失败：\(error.localizedDescription)（连不上服务器）"
+                    status = "登录失败：\(error.localizedDescription)"
                 }
             }
             busy = false

@@ -98,7 +98,9 @@ struct RootView: View {
         }
     }
 
-    /// 启动时用本地 token 实测一次：有效才放行，无效/过期则清 token 回登录页。
+    /// 启动时用本地 token 实测一次：只有服务端**明确 401** 才清 token 回登录页。
+    /// ⚠️ 网络故障 / TLS 证书过期 / 服务端临时不可用 一律**保留登录态**，
+    ///    先进主界面走本地缓存 —— 否则穿透证书一过期，用户就被无故登出（实测踩过）。
     private func validateToken() async {
         defer { validating = false }
         guard settings.isLoggedIn else {
@@ -110,9 +112,15 @@ struct RootView: View {
             // 能读到 root 说明 token 真实有效
             _ = try await ETAPIClient.shared.getNote("root")
             AppLogger.shared.log("启动校验：token 有效，进主界面")
+        } catch let e as APIError {
+            if case .http(let status) = e, status == 401 {
+                AppLogger.shared.log("启动校验 401：token 已失效，清 token 回登录页")
+                settings.logout()
+            } else {
+                AppLogger.shared.log("启动校验遇服务端异常（\(e.localizedDescription)），保留登录态离线进入")
+            }
         } catch {
-            AppLogger.shared.log("启动校验失败：\(error.localizedDescription)，清 token 回登录页")
-            settings.logout()
+            AppLogger.shared.log("启动校验遇网络/证书异常（\(error.localizedDescription)），保留登录态离线进入")
         }
     }
 }
