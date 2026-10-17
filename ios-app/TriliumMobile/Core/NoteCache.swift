@@ -151,7 +151,14 @@ extension NoteCache {
                 case "patchTitle":
                     _ = try await ETAPIClient.shared.patchNote(op.noteId, fields: ["title": op.title ?? ""])
                 case "create":
-                    let parent = op.parentNoteId ?? (try await ETAPIClient.shared.ensureInbox())
+                    // ⚠️ 不能写 `op.parentNoteId ?? (try await ...)`：?? 右侧是 autoclosure，
+                    // 不支持 async/throws（编译错误 operator can throw / async in autoclosure）
+                    let parent: String
+                    if let p = op.parentNoteId {
+                        parent = p
+                    } else {
+                        parent = try await ETAPIClient.shared.ensureInbox()
+                    }
                     _ = try await ETAPIClient.shared.createNote(
                         parentNoteId: parent,
                         title: op.title ?? "")
