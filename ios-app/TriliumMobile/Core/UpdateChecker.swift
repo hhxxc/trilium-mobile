@@ -139,14 +139,20 @@ enum UpdateChecker {
         return nil
     }
 
-    /// 构造按优先级排序的下载候选：自有域名直链最前，GitHub 原链最后
-    static func downloadCandidates(ipaURL: URL) -> [URL] {
+    /// 构造按优先级排序的下载候选：清单给的地址在先用，GitHub Releases 原链兜底。
+    /// ⚠️ 兜底不是多余的：2026-10-17 内网穿透的通配证书过期，NAS 域名整条链路 TLS 失败，
+    ///    只试一个源就等于更新彻底废掉 —— 而 GitHub 那条是完全独立的域名。
+    static func downloadCandidates(ipaURL: URL, version: String? = nil) -> [URL] {
         var candidates: [URL] = []
         func push(_ url: URL?) {
             guard let url, !candidates.contains(url) else { return }
             candidates.append(url)
         }
         push(ipaURL)
+        if let v = version, !v.isEmpty,
+           let gh = URL(string: "https://github.com/\(repo)/releases/download/v\(v)/trilium-mobile.ipa") {
+            push(gh)
+        }
         return candidates
     }
 
@@ -256,6 +262,8 @@ final class UpdateCenter: NSObject, ObservableObject {
     private var session: URLSession!
     private var currentTask: URLSessionDownloadTask?
     private var versionByTask: [Int: String] = [:]
+    /// 还没试过的下载源（第一个失败就换下一个）
+    private var candidateQueue: [URL] = []
     private var lastDownloadURL: String?
     private var checking = false
     private var lastPersist = Date.distantPast
@@ -427,19 +435,35 @@ final class UpdateCenter: NSObject, ObservableObject {
         await silentCheck(minInterval: 0)
     }
 
-    /// 开始后台下载（重复调用会替换旧任务）
+    /// 开始后台下载（重复调用会替换旧任务）。候选源按顺序试，失败自动换下一个。
     func startDownload(version: String, url: URL) {
+        startDownload(version: version,
+                      candidates: UpdateChecker.downloadCandidates(ipaURL: url, version: version))
+    }
+
+    func startDownload(version: String, candidates: [URL]) {
         currentTask?.cancel()
         latestVersion = version
-        lastDownloadURL = url.absoluteString
+        candidateQueue = candidates
         phase = .downloading(received: 0, total: 0)
         persist()
-        AppLogger.shared.log("后台下载开始: v\(version) ← \(url.host ?? "?")")
+        beginNextCandidate()
+    }
+
+    /// 试下一个候选源
+    private func beginNextCandidate() {
+        guard let url = candidateQueue.first else {
+            setPhase(.failed("所有下载源都失败，请稍后重试"))
+            return
+        }
+        candidateQueue.removeFirst()
+        lastDownloadURL = url.absoluteString
+        AppLogger.shared.log("后台下载开始: v\(latestVersion ?? "?") ← \(url.host ?? "?")")
 
         var req = URLRequest(url: url)
         req.setValue("TriliumMobile", forHTTPHeaderField: "User-Agent")
         let task = session.downloadTask(with: req)
-        versionByTask[task.taskIdentifier] = version
+        versionByTask[task.taskIdentifier] = latestVersion ?? ""
         currentTask = task
         task.resume()
         beginUIBackgroundTask()
@@ -448,6 +472,7 @@ final class UpdateCenter: NSObject, ObservableObject {
     func cancelDownload() {
         currentTask?.cancel()
         currentTask = nil
+        candidateQueue.removeAll()
         phase = .idle
         persist()
         AppLogger.shared.log("用户取消更新下载")
@@ -534,6 +559,7 @@ extension UpdateCenter: URLSessionDownloadDelegate {
             return
         }
         AppLogger.shared.log("后台下载完成: v\(version) \(UpdateFileStore.size(of: dest)) 字节")
+        DispatchQueue.main.async { self.candidateQueue.removeAll() }
         setPhase(.ready(version: version, fileURL: dest))
         endUIBackgroundTask()
     }
@@ -542,13 +568,23 @@ extension UpdateCenter: URLSessionDownloadDelegate {
         guard let error else { return }
         let ns = error as NSError
         if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
-        // 任务失败但本地已有完整包 → 当作完成
-        if let v = latestVersion, let existing = UpdateFileStore.existingDownload(version: v) {
-            setPhase(.ready(version: v, fileURL: existing))
-            return
+        DispatchQueue.main.async {
+            // 任务失败但本地已有完整包 → 当作完成
+            if let v = self.latestVersion, let existing = UpdateFileStore.existingDownload(version: v) {
+                self.phase = .ready(version: v, fileURL: existing)
+                self.persist()
+                return
+            }
+            // 还有候选源（例如清单域名证书挂了、改走 GitHub）→ 自动换下一个
+            if !self.candidateQueue.isEmpty {
+                AppLogger.shared.log("下载源失败（\(error.localizedDescription)），切换下一个候选源")
+                self.beginNextCandidate()
+                return
+            }
+            AppLogger.shared.log("后台下载失败: \(error.localizedDescription)")
+            self.phase = .failed(error.localizedDescription)
+            self.persist()
         }
-        AppLogger.shared.log("后台下载失败: \(error.localizedDescription)")
-        setPhase(.failed(error.localizedDescription))
     }
 
     /// 后台会话事件全部交付完毕：把系统的 completionHandler 还回去
