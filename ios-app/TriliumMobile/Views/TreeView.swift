@@ -84,21 +84,8 @@ struct TreeView: View {
     private func loadCurrent() async {
         loading = true
         do {
-            let note = try await ETAPIClient.shared.getNote(stack.last!.id)
-            let ids = note.childNoteIds ?? []
-            // 并发拉子笔记详情（旧版串行逐个 getNote，N 个子笔记 = N 次串行往返，是树浏览慢的主因）。
-            // 单个子笔记拉取失败（如已删除）跳过，不影响整体。
-            children = await withTaskGroup(of: (Int, Note)?.self) { group -> [Note] in
-                for (i, id) in ids.enumerated() {
-                    group.addTask {
-                        guard let n = try? await ETAPIClient.shared.getNote(id) else { return nil }
-                        return (i, n)
-                    }
-                }
-                var out: [(Int, Note)] = []
-                for case let pair? in group { out.append(pair) }
-                return out.sorted { $0.0 < $1.0 }.map(\.1) // 按原 childNoteIds 顺序
-            }
+            // 用参数化 childNotes 一次拉直接子笔记（旧版逐个 getNote 是 N+1，慢且可能漏）
+            children = try await ETAPIClient.shared.childNotes(of: stack.last!.id)
             errorMsg = ""
         } catch {
             errorMsg = "加载失败：\(error.localizedDescription)"

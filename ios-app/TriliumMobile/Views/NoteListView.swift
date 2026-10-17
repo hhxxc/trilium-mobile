@@ -100,22 +100,53 @@ struct NoteListView: View {
     }
 }
 
-/// 笔记列表行：标题 + 修改时间
+/// 笔记列表行：类型图标 + 标题 + 修改时间
 struct NoteRow: View {
     let note: Note
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(note.title.isEmpty ? "（无标题）" : note.title)
-                .font(.body)
-                .lineLimit(2)
-            if !note.friendlyModified.isEmpty {
-                Text(note.friendlyModified)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+        HStack(spacing: 12) {
+            Image(systemName: Self.icon(for: note.type))
+                .foregroundColor(Self.iconColor(for: note.type))
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(note.title.isEmpty ? "（无标题）" : note.title)
+                    .font(.body)
+                    .lineLimit(2)
+                if !note.friendlyModified.isEmpty {
+                    Text(note.friendlyModified)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
         }
         .padding(.vertical, 4)
+    }
+
+    static func icon(for type: String) -> String {
+        switch type {
+        case "code": return "chevron.left.forwardslash.chevron.right"
+        case "image": return "photo"
+        case "file": return "paperclip"
+        case "render": return "doc.richtext"
+        case "mermaid": return "chart.bar.doc.horizontal"
+        case "webView": return "globe"
+        case "book": return "folder"
+        case "search": return "magnifyingglass"
+        case "noteMap", "relationMap": return "point.3.connected.trianglepath.dotted"
+        case "canvas": return "scribble"
+        default: return "doc.text"
+        }
+    }
+
+    static func iconColor(for type: String) -> Color {
+        switch type {
+        case "code": return .orange
+        case "image": return .purple
+        case "file": return .blue
+        case "book": return .yellow
+        default: return Color(red: 0.17, green: 0.61, blue: 0.56)
+        }
     }
 }
 

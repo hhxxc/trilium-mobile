@@ -136,33 +136,47 @@ struct ETAPIClient {
         return try JSONDecoder().decode(CreateNoteResponse.self, from: data)
     }
 
-    /// 搜索（v0.106 走 GET /etapi/notes?search=…，兼容老 /etapi/search-notes）
-    /// ⚠️ 解码失败必须抛错并记日志，不能静默返回空——否则列表空白无任何提示（实测踩坑）
+    /// 搜索笔记。
+    /// ⚠️ 关键（2026-10-17 实测根因）：v0.106 的 GET /etapi/notes 用的是**参数化排序**，
+    ///   排序走 `orderBy` + `orderDirection` + `limit` 三个独立参数，**不是**搜索语法字符串。
+    ///   旧代码把 "order by dateModified desc limit 30" 塞进 search 参数 → 被当成全文搜索词
+    ///   → 永远搜不到 → 列表空白。
     func searchNotes(_ query: String, limit: Int = 30) async throws -> [Note] {
-        let data: Data
-        do {
-            data = try await raw("/etapi/notes", query: [URLQueryItem(name: "search", value: query)])
-        } catch APIError.http(let status) where status == 404 {
-            data = try await raw("/etapi/search-notes", query: [URLQueryItem(name: "search", value: query)])
-        }
-        // 诊断：响应原文概况写入日志（含解码失败时用户截图即可定位结构差异）
-        let preview = String(data: data.prefix(300), encoding: .utf8) ?? "(非UTF8)"
-        AppLogger.shared.log("搜索[\(query.prefix(24))]响应: \(data.count)字节 \(preview.replacingOccurrences(of: "\n", with: " "))")
-
+        var q = [URLQueryItem(name: "search", value: query)]
+        q.append(URLQueryItem(name: "limit", value: String(limit)))
+        let data = try await raw("/etapi/notes", query: q)
         if let resp = try? JSONDecoder().decode(SearchResponse.self, from: data), let r = resp.results {
-            return Array(r.prefix(limit))
+            return r
         }
-        do {
-            return Array(try JSONDecoder().decode([Note].self, from: data).prefix(limit))
-        } catch {
-            AppLogger.shared.log("搜索解码失败: \(error.localizedDescription)")
-            throw APIError.invalidResponse
-        }
+        return (try? JSONDecoder().decode([Note].self, from: data)) ?? []
     }
 
-    /// 最近修改的笔记（搜索语法 order by dateModified desc）
+    /// 最近修改的笔记：参数化排序（orderBy=dateModified + orderDirection=desc + limit）
     func recentNotes(limit: Int = 30) async throws -> [Note] {
-        try await searchNotes("order by dateModified desc limit \(limit)", limit: limit)
+        var q = [URLQueryItem(name: "search", value: "")]
+        q.append(URLQueryItem(name: "orderBy", value: "dateModified"))
+        q.append(URLQueryItem(name: "orderDirection", value: "desc"))
+        q.append(URLQueryItem(name: "limit", value: String(limit)))
+        let data = try await raw("/etapi/notes", query: q)
+        if let resp = try? JSONDecoder().decode(SearchResponse.self, from: data), let r = resp.results {
+            return r
+        }
+        return (try? JSONDecoder().decode([Note].self, from: data)) ?? []
+    }
+
+    /// 子树下的直接子笔记（树的展开用；参数化，不走搜索语法）
+    func childNotes(of parentId: String) async throws -> [Note] {
+        var q = [URLQueryItem(name: "search", value: "")]
+        q.append(URLQueryItem(name: "ancestorNoteId", value: parentId))
+        q.append(URLQueryItem(name: "ancestorDepth", value: "eq1"))
+        q.append(URLQueryItem(name: "orderBy", value: "title"))
+        q.append(URLQueryItem(name: "orderDirection", value: "asc"))
+        q.append(URLQueryItem(name: "limit", value: "500"))
+        let data = try await raw("/etapi/notes", query: q)
+        if let resp = try? JSONDecoder().decode(SearchResponse.self, from: data), let r = resp.results {
+            return r
+        }
+        return (try? JSONDecoder().decode([Note].self, from: data)) ?? []
     }
 
     // MARK: - 收件箱
