@@ -18,6 +18,8 @@ struct NoteListView: View {
     @State private var browseMode = 0
     /// 搜索历史（最近 8 条，UserDefaults 持久化）；搜索无结果时给出可点词条
     @State private var searchHistory: [String] = []
+    /// 离线待同步操作数（顶部提示条）
+    @State private var pendingCount = 0
 
     private var isSearching: Bool {
         !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
@@ -64,6 +66,10 @@ struct NoteListView: View {
         .refreshable { await load() }
         .onAppear {
             searchHistory = UserDefaults.standard.stringArray(forKey: "trilium.searchHistory") ?? []
+            pendingCount = NoteCache.shared.pendingOps.count
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NoteCache.pendingOpsChanged)) { _ in
+            pendingCount = NoteCache.shared.pendingOps.count
         }
         // 编辑器改了标题：就地刷新列表，返回时看到的不是旧标题
         .onReceive(NotificationCenter.default.publisher(for: .noteMetaChanged)) { _ in
@@ -124,6 +130,21 @@ struct NoteListView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             List {
+                // 离线积压提示条：点击手动补交
+                if pendingCount > 0 {
+                    Button {
+                        Task { await NoteCache.shared.flushPendingOps() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .foregroundColor(.orange)
+                            Text("\(pendingCount) 条待同步（点击立即上传）")
+                                .font(.footnote)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                    }
+                }
                 if !errorMsg.isEmpty {
                     Text(errorMsg).font(.footnote).foregroundColor(.secondary)
                 }
@@ -239,14 +260,17 @@ struct NoteListView: View {
         deleting = true
         do {
             try await ETAPIClient.shared.deleteNote(note.noteId)
-            NoteCache.shared.remove(note.noteId)
-            notes.removeAll { $0.noteId == note.noteId }
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
             AppLogger.shared.log("已删除笔记: \(note.title)")
         } catch {
-            AppLogger.shared.log("删除失败: \(error.localizedDescription)")
-            errorMsg = "删除失败：\(error.localizedDescription)"
+            // 断网/失败：入离线队列，列表照样移除（队列保序，联网后补交删除）
+            NoteCache.shared.enqueue(PendingOp(kind: "delete", id: UUID().uuidString,
+                noteId: note.noteId, title: note.title, content: nil, parentNoteId: nil,
+                createdAt: Date()))
+            AppLogger.shared.log("删除已入离线队列: \(note.title)")
         }
+        NoteCache.shared.remove(note.noteId)
+        notes.removeAll { $0.noteId == note.noteId }
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
         deleting = false
         noteToDelete = nil
     }
@@ -344,13 +368,19 @@ struct ComposeView: View {
             do {
                 let inboxId = try await ETAPIClient.shared.ensureInbox()
                 _ = try await ETAPIClient.shared.createNote(parentNoteId: inboxId, title: content)
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                text = "" // 清输入，连续速记不用手动删
-                await onSaved()
-                dismiss()
             } catch {
-                errorMsg = "保存失败：\(error.localizedDescription)"
+                // 断网/失败：入离线队列（收件箱），联网后补交
+                NoteCache.shared.enqueue(PendingOp(kind: "create", id: UUID().uuidString,
+                    noteId: "", title: content, content: nil, parentNoteId: nil,
+                    createdAt: Date()))
             }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            text = "" // 清输入，连续速记不用手动删
+            await onSaved()
+            if !NoteCache.shared.pendingOps.isEmpty {
+                await NoteCache.shared.flushPendingOps()
+            }
+            dismiss()
             busy = false
         }
     }

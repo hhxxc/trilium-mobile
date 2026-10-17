@@ -9,7 +9,10 @@ import SwiftUI
 ///   有效才进主界面，否则清 token 回登录页 —— 不能只看本地有没有 token 值。
 struct RootView: View {
     @EnvironmentObject private var settings: AppSettings
+    @Environment(\.scenePhase) private var scenePhase
     @State private var validating = true
+    /// 生物识别锁：进后台即锁，回前台需认证（设置页可开关）
+    @State private var isLocked = false
 
     var body: some View {
         Group {
@@ -22,13 +25,54 @@ struct RootView: View {
                 LoginView()
             }
         }
+        .overlay {
+            if isLocked {
+                lockCover
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .sessionExpired)) { _ in
             AppLogger.shared.log("收到 sessionExpired 通知，执行 logout")
             settings.logout()
         }
-        .task { await validateToken() }
+        .task {
+            await validateToken()
+            if settings.lockEnabled { authenticate() }
+            // 启动补交离线积压（有网才成功，失败留队列）
+            await NoteCache.shared.flushPendingOps()
+        }
+        // 进后台立即上锁（锁屏/切走都算）；回前台弹认证 + 补交离线积压
+        .onChange(of: scenePhase) { phase in
+            guard !validating else { return }
+            if phase == .background {
+                if settings.lockEnabled { isLocked = true }
+            } else if phase == .active {
+                if settings.lockEnabled, isLocked { authenticate() }
+                Task { await NoteCache.shared.flushPendingOps() }
+            }
+        }
         .onChange(of: settings.isLoggedIn) { loggedIn in
             AppLogger.shared.log("isLoggedIn 变为 \(loggedIn)")
+        }
+    }
+
+    /// 锁定遮罩：挡住全部内容，防后台截屏泄露
+    private var lockCover: some View {
+        ZStack {
+            Color(UIColor.systemBackground).ignoresSafeArea()
+            VStack(spacing: 16) {
+                Image(systemName: "lock.shield")
+                    .font(.system(size: 44))
+                    .foregroundColor(Color(red: 0.17, green: 0.61, blue: 0.56))
+                Text("已锁定").font(.headline)
+                Button("解锁") { authenticate() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private func authenticate() {
+        settings.authenticate { ok in
+            isLocked = !ok  // 取消认证保持锁定，点「解锁」可重试
         }
     }
 

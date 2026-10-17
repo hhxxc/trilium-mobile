@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 
 /// 服务器连接设置（服务器地址 + ETAPI token），持久化到 UserDefaults。
 final class AppSettings: ObservableObject {
@@ -10,6 +11,17 @@ final class AppSettings: ObservableObject {
         static let inboxNoteId = "trilium.inboxNoteId"
         static let inboxTitle = "trilium.inboxTitle"
         static let readerFontScale = "trilium.readerFontScale"
+        static let lockEnabled = "trilium.lockEnabled"
+    }
+
+    /// 生物识别锁开关（FaceID/触控ID，失败回退设备密码；RootView 门禁）
+    @Published var lockEnabled: Bool {
+        didSet { UserDefaults.standard.set(lockEnabled, forKey: Keys.lockEnabled) }
+    }
+
+    /// 设备是否可用生物识别/密码认证（SettingsView 决定开关是否可用）
+    static var canAuthenticate: Bool {
+        LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: nil)
     }
 
     /// 阅读页字号缩放（1.0 = 标准；详情页 Aa 菜单调节，持久化）
@@ -52,7 +64,22 @@ final class AppSettings: ObservableObject {
         inboxNoteId = d.string(forKey: Keys.inboxNoteId) ?? ""
         inboxTitle = d.string(forKey: Keys.inboxTitle) ?? AppConfig.defaultInboxTitle
         readerFontScale = d.object(forKey: Keys.readerFontScale) as? Double ?? 1.0
+        lockEnabled = d.bool(forKey: Keys.lockEnabled)
         isLoggedIn = !savedToken.isEmpty  // 用局部变量，避免 init 里访问 self.token 的初始化顺序问题
+    }
+
+    /// 弹出生物识别/密码认证（回调回主线程）
+    func authenticate(_ completion: @escaping (Bool) -> Void) {
+        let ctx = LAContext()
+        ctx.localizedFallbackTitle = "用密码解锁"
+        var err: NSError?
+        guard ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) else {
+            completion(true)  // 设备没设任何锁，视为通过
+            return
+        }
+        ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "解锁 Trilium") { ok, _ in
+            DispatchQueue.main.async { completion(ok) }
+        }
     }
 
     func save(token: String, server: String) {

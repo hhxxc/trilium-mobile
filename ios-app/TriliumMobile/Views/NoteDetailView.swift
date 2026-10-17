@@ -15,6 +15,8 @@ struct NoteDetailView: View {
     @State private var hasLoadedOnce = false
     @State private var errorMsg = ""
     @State private var showEditor = false
+    @State private var showWebEditor = false
+    @State private var showEditChoice = false
     @State private var shareURL: URL?
     /// 笔记内链接点击后打开的目标笔记（sheet(item:)）
     @State private var linkedNote: Note?
@@ -95,7 +97,7 @@ struct NoteDetailView: View {
                     }
                 }
                 if note.type == "text" || note.type == "code" {
-                    Button("编辑") { showEditor = true }
+                    Button("编辑") { showEditChoice = true }
                 }
             }
         }
@@ -108,6 +110,15 @@ struct NoteDetailView: View {
         // ⚠️ 编辑返回必须 force 刷新：普通 load() 会命中本地缓存显示**旧内容**（编辑白改）
         .sheet(isPresented: $showEditor, onDismiss: { Task { await load(force: true) } }) {
             NativeEditorView(note: note, initialContent: textContent)
+        }
+        // 网页编辑器（CKEditor 完整格式：表格/公式/图片），返回同样 force 刷新
+        .sheet(isPresented: $showWebEditor, onDismiss: { Task { await load(force: true) } }) {
+            WebEditorView(note: note)
+        }
+        .confirmationDialog("选择编辑方式", isPresented: $showEditChoice, titleVisibility: .visible) {
+            Button("原生编辑（简洁快速）") { showEditor = true }
+            Button("网页编辑（完整格式：表格/公式/图片）") { showWebEditor = true }
+            Button("取消", role: .cancel) {}
         }
         // 笔记内链接：App 内新开一层阅读页（点返回关闭）
         .sheet(item: $linkedNote) { linked in
@@ -396,24 +407,38 @@ struct NativeEditorView: View {
     private func save() {
         saving = true
         Task {
+            let titleChanged = title != note.title
+            let contentChanged = note.type == "code" && content != initialContent
             do {
                 // 标题变化 → PATCH；正文变化（code 类型）→ PUT content
-                if title != note.title {
+                if titleChanged {
                     _ = try await ETAPIClient.shared.patchNote(note.noteId, fields: ["title": title])
                 }
-                if note.type == "code" && content != initialContent {
+                if contentChanged {
                     try await ETAPIClient.shared.putContent(note.noteId, content: content)
                 }
-                // 更新缓存
-                NoteCache.shared.saveContent(note.noteId, text: content)
-                // 广播元数据变化：让首页列表行同步新标题（否则返回列表还是旧标题）
-                if title != note.title {
-                    NotificationCenter.default.post(name: .noteMetaChanged, object: nil)
-                }
-                dismiss()
             } catch {
-                errorMsg = "保存失败：\(error.localizedDescription)"
+                // 断网/失败：入离线队列，联网后自动补交（队列保序，先标题后正文）
+                if titleChanged {
+                    NoteCache.shared.enqueue(PendingOp(kind: "patchTitle", id: UUID().uuidString,
+                        noteId: note.noteId, title: title, content: nil, parentNoteId: nil,
+                        createdAt: Date()))
+                }
+                if contentChanged {
+                    NoteCache.shared.enqueue(PendingOp(kind: "putContent", id: UUID().uuidString,
+                        noteId: note.noteId, title: nil, content: content, parentNoteId: nil,
+                        createdAt: Date()))
+                }
             }
+            // 无论在线离线都更新本地缓存并关闭（离线队列保证最终一致）
+            NoteCache.shared.saveContent(note.noteId, text: content)
+            if titleChanged {
+                NotificationCenter.default.post(name: .noteMetaChanged, object: nil)
+            }
+            if !NoteCache.shared.pendingOps.isEmpty {
+                Task { await NoteCache.shared.flushPendingOps() }  // 顺手补交旧积压
+            }
+            dismiss()
             saving = false
         }
     }
@@ -869,6 +894,51 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+/// 网页编辑器兜底：加载服务端 Trilium 页面（#root/<noteId>），完整 CKEditor 能力
+/// （表格/LaTeX/图片插入/格式刷）。首次使用需在页面里登录一次（密码+验证码），
+/// cookie 由 WKWebsiteDataStore 持久化，之后免登录。
+struct WebEditorView: View {
+    let note: Note
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationView {
+            FullWebView(url: editorURL)
+                .ignoresSafeArea(edges: .bottom)
+                .navigationTitle("网页编辑")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("完成") { dismiss() }
+                    }
+                }
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    private var editorURL: URL {
+        let base = AppSettings.shared.serverURL
+        return URL(string: base.absoluteString + "/#root/" + note.noteId) ?? base
+    }
+}
+
+/// 完整网页视图（共享进程池，cookie/登录态跨打开复用）
+struct FullWebView: UIViewRepresentable {
+    static let sharedProcessPool = WKProcessPool()
+    let url: URL
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.processPool = FullWebView.sharedProcessPool
+        let wv = WKWebView(frame: .zero, configuration: config)
+        wv.allowsBackForwardNavigationGestures = true
+        wv.load(URLRequest(url: url))
+        return wv
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
 
 /// 图片查看：双指捏合缩放（1x~6x）+ 双击 1x/2x 切换；放大后可拖动平移，缩回 1x 自动复位

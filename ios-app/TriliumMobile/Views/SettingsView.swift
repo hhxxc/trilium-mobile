@@ -39,6 +39,20 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("安全") {
+                    if AppSettings.canAuthenticate {
+                        Toggle("Face ID / 密码锁", isOn: $settings.lockEnabled)
+                        // 开着时：切到后台即锁定，回前台需认证
+                        if settings.lockEnabled {
+                            Text("切换到后台后需 Face ID（或设备密码）解锁")
+                                .font(.footnote).foregroundColor(.secondary)
+                        }
+                    } else {
+                        Text("此设备未设置 Face ID / 触控 ID / 密码，无法启用应用锁")
+                            .font(.footnote).foregroundColor(.secondary)
+                    }
+                }
+
                 Section("离线缓存") {
                     HStack {
                         Text("缓存大小")

@@ -91,5 +91,82 @@ final class NoteCache {
         try? fm.removeItem(at: root)
         try? fm.createDirectory(at: contentDir, withIntermediateDirectories: true)
         try? fm.createDirectory(at: blobDir, withIntermediateDirectories: true)
+        // 缓存清了，待同步操作必须保留（是真实数据不是缓存）
+        if !pendingOps.isEmpty {
+            UserDefaults.standard.set(try? JSONEncoder().encode(pendingOps), forKey: "trilium.pendingOps")
+        }
+    }
+}
+
+// MARK: - 离线写入队列
+
+/// 待同步操作：断网时的写操作先入队，联网后按序补交（保序，失败即停不跳过）
+struct PendingOp: Codable, Identifiable {
+    /// putContent（改正文）/ patchTitle（改标题）/ create（新建）/ delete（删除）
+    let kind: String
+    let id: String
+    let noteId: String
+    var title: String?
+    var content: String?
+    var parentNoteId: String?
+    let createdAt: Date
+}
+
+extension NoteCache {
+    private static let pendingKey = "trilium.pendingOps"
+
+    /// 队列变更通知（列表/设置页刷新待同步角标）
+    static let pendingOpsChanged = Notification.Name("trilium.pendingOpsChanged")
+
+    var pendingOps: [PendingOp] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: Self.pendingKey) else { return [] }
+            return (try? JSONDecoder().decode([PendingOp].self, from: data)) ?? []
+        }
+        set {
+            UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: Self.pendingKey)
+            NotificationCenter.default.post(name: Self.pendingOpsChanged, object: nil)
+        }
+    }
+
+    func enqueue(_ op: PendingOp) {
+        var list = pendingOps
+        list.append(op)
+        pendingOps = list
+        AppLogger.shared.log("离线入队: \(op.kind) \(op.noteId)（共 \(list.count) 条待同步）")
+    }
+
+    /// 按序补交队列：成功一项删一项；某项失败即停（后面的依赖前面的顺序，不能跳）。
+    /// 返回是否全部清空。
+    @discardableResult
+    func flushPendingOps() async -> Bool {
+        var list = pendingOps
+        guard !list.isEmpty else { return true }
+        while !list.isEmpty {
+            let op = list[0]
+            do {
+                switch op.kind {
+                case "putContent":
+                    try await ETAPIClient.shared.putContent(op.noteId, content: op.content ?? "")
+                case "patchTitle":
+                    _ = try await ETAPIClient.shared.patchNote(op.noteId, fields: ["title": op.title ?? ""])
+                case "create":
+                    _ = try await ETAPIClient.shared.createNote(
+                        parentNoteId: op.parentNoteId ?? try await ETAPIClient.shared.ensureInbox(),
+                        title: op.title ?? "")
+                case "delete":
+                    try await ETAPIClient.shared.deleteNote(op.noteId)
+                default:
+                    break  // 未知类型（旧版本残留）：丢弃
+                }
+                list.removeFirst()
+                pendingOps = list
+                AppLogger.shared.log("离线补交成功: \(op.kind) \(op.noteId)，剩 \(list.count) 条")
+            } catch {
+                AppLogger.shared.log("离线补交失败（保留队列，下次重试）: \(error.localizedDescription)")
+                return false
+            }
+        }
+        return true
     }
 }
