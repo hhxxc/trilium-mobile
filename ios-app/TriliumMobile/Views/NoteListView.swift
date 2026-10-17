@@ -36,15 +36,18 @@ struct NoteListView: View {
         .navigationBarTitleDisplayMode(isSearching ? .inline : .large)
         // 目录模式没有搜索框；最近/搜索才有
         .searchable(text: $searchQuery, prompt: "搜索笔记")
-        .toolbar {
-            ToolbarItemGroup(placement: .navigationBarTrailing) {
-                // 树状目录入口改为顶部固定入口
+        // ⚠️ 视图切换器不能放 toolbar：iOS 15 对 toolbar 内 segmented Picker 渲染异常
+        //   （实测不显示）。放内容区顶部固定条（safeAreaInset，iOS 15 稳定支持）。
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if !isSearching {
                 Picker("视图", selection: $browseMode) {
-                    Image(systemName: "clock").tag(0)
-                    Image(systemName: "folder").tag(1)
+                    Label("最近", systemImage: "clock").tag(0)
+                    Label("目录", systemImage: "folder").tag(1)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 110)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.bar)
             }
         }
         // 防抖实时搜索：query 变化后停 400ms 才发请求，连续输入不轰服务端；

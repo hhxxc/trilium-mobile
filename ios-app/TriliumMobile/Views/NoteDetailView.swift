@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import Photos
 
 /// 笔记详情（原生阅读页）：ETAPI 拿内容，按类型原生渲染。
 /// text → 富文本 HTML；code → 代码；image → 图片；file → 附件；其他 → 降级提示。
@@ -397,7 +398,25 @@ enum NoteHTML {
       @media (prefers-color-scheme: dark) {
         .code-wrap .copy-btn { background: rgba(60,60,67,0.88); color: #ddd; }
       }
+      img { -webkit-touch-callout: none; }
     </style>
+    <script>
+    // 长按图片 600ms → 通知原生保存到相册（禁掉系统 callout，统一走自家流程）
+    (function() {
+      var timer;
+      document.addEventListener('touchstart', function(e) {
+        var img = e.target.closest ? e.target.closest('img') : null;
+        if (!img || !img.src) return;
+        timer = setTimeout(function() {
+          window.webkit && window.webkit.messageHandlers.imgsave &&
+            window.webkit.messageHandlers.imgsave.postMessage(img.src);
+        }, 600);
+      }, { passive: true });
+      ['touchend', 'touchmove', 'touchcancel'].forEach(function(ev) {
+        document.addEventListener(ev, function() { clearTimeout(timer); }, { passive: true });
+      });
+    })();
+    </script>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
       document.querySelectorAll('pre').forEach(function(pre) {
@@ -541,7 +560,7 @@ struct ContentWebView: UIViewRepresentable {
         Coordinator(noteId: noteId, onOpenNote: onOpenNote)
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, UIScrollViewDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, UIScrollViewDelegate, WKScriptMessageHandler {
         let noteId: String
         let onOpenNote: ((String) -> Void)?
         var lastHTML = ""
@@ -551,6 +570,50 @@ struct ContentWebView: UIViewRepresentable {
         init(noteId: String, onOpenNote: ((String) -> Void)?) {
             self.noteId = noteId
             self.onOpenNote = onOpenNote
+        }
+
+        /// JS 长按图片 → postMessage("imgsave") → 下载 → 存相册
+        func userContentController(_ userContentController: WKUserContentController,
+                                   didReceive message: WKScriptMessage) {
+            guard message.name == "imgsave", let src = message.body as? String, !src.isEmpty else { return }
+            saveImageToPhotos(src: src)
+        }
+
+        private func saveImageToPhotos(src: String) {
+            let url: URL?
+            if src.hasPrefix("http://") || src.hasPrefix("https://") {
+                url = URL(string: src)
+            } else {
+                url = URL(string: src, relativeTo: AppSettings.shared.serverURL)
+            }
+            guard let target = url else { return }
+            URLSession.shared.dataTask(with: target) { data, _, _ in
+                guard let data, let img = UIImage(data: data) else {
+                    DispatchQueue.main.async {
+                        AppLogger.shared.log("图片下载失败: \(target.absoluteString.prefix(80))")
+                    }
+                    return
+                }
+                // .addOnly：只需「添加到相册」权限，不请求读相册
+                PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+                    guard status == .authorized || status == .limited else {
+                        DispatchQueue.main.async { AppLogger.shared.log("无相册写入权限，保存取消") }
+                        return
+                    }
+                    PHPhotoLibrary.shared().performChanges({
+                        PHAssetChangeRequest.creationRequestForAsset(from: img)
+                    }, completionHandler: { ok, err in
+                        DispatchQueue.main.async {
+                            if ok {
+                                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                                AppLogger.shared.log("图片已保存到相册")
+                            } else {
+                                AppLogger.shared.log("保存失败: \(err?.localizedDescription ?? "?")")
+                            }
+                        }
+                    })
+                }
+            }.resume()
         }
 
         private var posKey: String { "trilium.readpos.\(noteId)" }
@@ -628,7 +691,9 @@ struct ContentWebView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WKWebView {
-        let wv = WKWebView()
+        let cfg = WKWebViewConfiguration()
+        cfg.userContentController.add(context.coordinator, name: "imgsave")
+        let wv = WKWebView(frame: .zero, configuration: cfg)
         wv.isOpaque = false
         wv.backgroundColor = .clear
         wv.scrollView.backgroundColor = .clear
