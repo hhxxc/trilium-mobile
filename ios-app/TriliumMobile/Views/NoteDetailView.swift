@@ -189,6 +189,8 @@ struct NoteDetailView: View {
             fileView
         case "code":
             ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "code", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote, onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump)
+        case "mermaid":
+            ContentWebView(html: NoteHTML.wrapMermaid(title: displayTitle, code: textContent), noteId: note.noteId, onOpenNote: openLinkedNote, onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump)
         case "render":
             ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "render", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote, onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump)
         case "text":
@@ -502,6 +504,62 @@ enum NoteHTML {
     });
     </script>
     """
+
+    /// mermaid.min.js 全文（Bundle 内联，~2.6MB；只加载一次）
+    private static let mermaidJS: String = {
+        guard let url = Bundle.main.url(forResource: "mermaid", withExtension: "js"),
+              let s = try? String(contentsOf: url, encoding: .utf8) else {
+            AppLogger.shared.log("mermaid.js 资源缺失")
+            return ""
+        }
+        // 保险：防止 JS 字符串中出现的 </script> 截断 HTML
+        return s.replacingOccurrences(of: "</script", with: "<\\/script", options: .caseInsensitive)
+    }()
+
+    /// mermaid 类型笔记：代码 → 本地渲染图表（无外网也能看，官方移动端没有的能力）
+    static func wrapMermaid(title: String, code: String) -> String {
+        guard !mermaidJS.isEmpty else {
+            return wrap(title: title, raw: "<pre>\(code)</pre>", noteType: "code")
+        }
+        let escaped = code
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+        return """
+        <!DOCTYPE html>
+        <html><head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0">
+        <style>
+          body { font-family: -apple-system, "PingFang SC", sans-serif;
+                 margin: 0; padding: 16px 18px 60px; word-wrap: break-word;
+                 -webkit-text-size-adjust: 100%; background: #fff; }
+          @media (prefers-color-scheme: dark) { body { background: #000; } }
+          h1 { font-size: 24px; margin: 8px 0 16px; }
+          .mermaid { display: flex; justify-content: center; }
+          .mermaid svg { max-width: 100%; height: auto; }
+          .err { color: #c0392b; font-size: 13px; white-space: pre-wrap; }
+        </style>
+        </head><body>
+        <h1>\(title.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;"))</h1>
+        <pre class="mermaid">
+        \(escaped)
+        </pre>
+        <script>\(mermaidJS)</script>
+        <script>
+        mermaid.initialize({
+          startOnLoad: true,
+          theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+          securityLevel: 'loose'
+        });
+        mermaid.parseError = function(err) {
+          var el = document.querySelector('.mermaid');
+          if (el) { el.className = 'err'; el.textContent = '图表语法错误：' + err; }
+        };
+        </script>
+        </body></html>
+        """
+    }
 
     /// 给任意 HTML 注入代码块增强（有 </head> 插头部，否则放开头）
     private static func injectEnhance(_ html: String) -> String {

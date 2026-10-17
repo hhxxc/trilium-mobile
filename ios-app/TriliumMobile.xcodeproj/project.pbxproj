@@ -23,6 +23,7 @@
 		6559bc9f75e655a18a686c92 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37e78a6aade5504398a2f5fc /* SettingsView.swift */; };
 		02f93e95a8f9519e85c760b5 /* TreeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36124ab65b8c5e6ebdb5ec0f /* TreeView.swift */; };
 		4bb9ccdf258b582eb9bfd1f8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = eaab85ea488d522a9c29a654 /* Assets.xcassets */; };
+		53E4D00000000000000000A1 /* mermaid.min.js in Resources */ = {isa = PBXBuildFile; fileRef = 53E4D00000000000000000A2 /* mermaid.min.js */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +44,7 @@
 		36124ab65b8c5e6ebdb5ec0f /* TreeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/TreeView.swift; sourceTree = "<group>"; };
 		16e2e8000f285b40a0d23f25 /* TriliumMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TriliumMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		eaab85ea488d522a9c29a654 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		53E4D00000000000000000A2 /* mermaid.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Resources/mermaid.min.js; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +77,7 @@
 				37e78a6aade5504398a2f5fc /* SettingsView.swift */,
 				36124ab65b8c5e6ebdb5ec0f /* TreeView.swift */,
 				eaab85ea488d522a9c29a654 /* Assets.xcassets */,
+				53E4D00000000000000000A2 /* mermaid.min.js */,
 			);
 			path = TriliumMobile;
 			sourceTree = "<group>";
@@ -146,6 +149,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4bb9ccdf258b582eb9bfd1f8 /* Assets.xcassets in Resources */,
+				53E4D00000000000000000A1 /* mermaid.min.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
