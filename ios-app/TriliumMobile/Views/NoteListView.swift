@@ -47,7 +47,7 @@ struct NoteListView: View {
                     Text(errorMsg).font(.footnote).foregroundColor(.secondary)
                 }
                 ForEach(notes) { note in
-                    NavigationLink(destination: EditorView(note: note)) {
+                    NavigationLink(destination: NoteDetailView(note: note)) {
                         NoteRow(note: note)
                     }
                 }

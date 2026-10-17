@@ -58,7 +58,7 @@ struct TreeView: View {
                     .foregroundColor(.primary)
             }
         } else {
-            NavigationLink(destination: EditorView(note: note)) {
+            NavigationLink(destination: NoteDetailView(note: note)) {
                 Label(note.title.isEmpty ? "（无标题）" : note.title, systemImage: "doc.text")
             }
         }
