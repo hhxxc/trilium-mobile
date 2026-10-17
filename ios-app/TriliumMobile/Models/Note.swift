@@ -22,6 +22,41 @@ struct Note: Codable, Identifiable, Equatable {
         if s.count >= 16 { return String(s.prefix(16)) }
         return s
     }
+
+    // 缓存 formatter / 解析器（创建开销大，不能每次求值新建）
+    private static let isoParser: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds] // "…T07:00:00.000Z"
+        return f
+    }()
+    private static let isoParserNoFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime] // 兜底：无毫秒变体 "…T07:00:00Z"
+        return f
+    }()
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    /// 列表展示的友好时间：今天显示 HH:mm，昨天显示「昨天」，更早显示日期。
+    /// ⚠️ modifiedDisplay 是截取 UTC 原串直接显示，国内 UTC+8 会差 8 小时——列表一律用本方法。
+    var friendlyModified: String {
+        guard let raw = dateModified, !raw.isEmpty,
+              let d = Self.isoParser.date(from: raw) ?? Self.isoParserNoFrac.date(from: raw) else {
+            return modifiedDisplay // 解析失败退回原样串
+        }
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return Self.timeFormatter.string(from: d) }
+        if cal.isDateInYesterday(d) { return "昨天" }
+        return Self.dateFormatter.string(from: d)
+    }
 }
 
 /// ETAPI 搜索响应（TriliumNext v0.106 起合并进 GET /etapi/notes?search=…）

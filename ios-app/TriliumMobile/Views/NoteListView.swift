@@ -17,11 +17,15 @@ struct NoteListView: View {
         .navigationTitle("笔记")
         .navigationBarTitleDisplayMode(.large)
         .searchable(text: $searchQuery, prompt: "搜索笔记")
-        .onSubmit(of: .search) { Task { await load() } }
-        .onChange(of: searchQuery) { _ in
-            if searchQuery.isEmpty { Task { await load() } }
+        // 防抖实时搜索：query 变化后停 400ms 才发请求，连续输入不轰服务端；
+        // 旧任务会被自动取消（结构化并发），旧请求不会抢跑
+        .task(id: searchQuery) {
+            if !searchQuery.isEmpty {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+            }
+            guard !Task.isCancelled else { return }
+            await load()
         }
-        .task { await load() }
         .refreshable { await load() }
         .sheet(isPresented: $showCompose) {
             ComposeView(onSaved: { await load() })
@@ -105,8 +109,8 @@ struct NoteRow: View {
             Text(note.title.isEmpty ? "（无标题）" : note.title)
                 .font(.body)
                 .lineLimit(2)
-            if !note.modifiedDisplay.isEmpty {
-                Text(note.modifiedDisplay)
+            if !note.friendlyModified.isEmpty {
+                Text(note.friendlyModified)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

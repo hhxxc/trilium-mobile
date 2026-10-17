@@ -11,10 +11,26 @@ struct NoteDetailView: View {
     @State private var errorMsg = ""
     @State private var showEditor = false
 
+    /// 可预览类型：text（HTML）/ code（纯文本）。image/file 等拿到的 content 是二进制，
+    /// 按 HTML 渲染只会白屏，直接给提示 + 编辑器入口。
+    private var isPreviewable: Bool {
+        note.type == "text" || note.type == "code"
+    }
+
     var body: some View {
         Group {
             if loading {
                 ProgressView("加载中…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if !isPreviewable {
+                VStack(spacing: 12) {
+                    Image(systemName: note.type == "image" ? "photo" : "paperclip")
+                        .font(.system(size: 40)).foregroundColor(.secondary)
+                    Text("「\(note.type)」类型暂不支持预览")
+                        .font(.footnote).foregroundColor(.secondary)
+                    Button("用编辑器打开") { showEditor = true }
+                        .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !errorMsg.isEmpty {
                 VStack(spacing: 12) {
                     Text(errorMsg).font(.footnote).foregroundColor(.secondary)
@@ -40,6 +56,10 @@ struct NoteDetailView: View {
 
     private func load() async {
         loading = true
+        guard isPreviewable else { // 不可预览类型不发请求（content 是二进制）
+            loading = false
+            return
+        }
         do {
             let raw = try await ETAPIClient.shared.getContent(note.noteId)
             // 诊断：把实际拿到的内容概况写日志，便于排查「正文空白」类问题
@@ -152,20 +172,28 @@ struct NoteDetailView: View {
 struct ContentWebView: UIViewRepresentable {
     let html: String
 
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        // 上次已渲染的内容：字符串直比做 diff。
+        //（旧版存 html.hashValue 到 view.tag：hashValue 种子每次启动随机且可能碰撞，不可靠）
+        var lastHTML: String = ""
+    }
+
     func makeUIView(context: Context) -> WKWebView {
         let wv = WKWebView()
         wv.isOpaque = false
         wv.backgroundColor = .clear
-        wv.tag = html.hashValue
+        wv.scrollView.backgroundColor = .clear
+        context.coordinator.lastHTML = html
         wv.loadHTMLString(html, baseURL: AppSettings.shared.serverURL)
         return wv
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        // 内容变化时重载（如编辑返回后刷新）；tag 记上次已渲染内容，避免重复加载
-        if uiView.tag != html.hashValue {
-            uiView.tag = html.hashValue
-            uiView.loadHTMLString(html, baseURL: AppSettings.shared.serverURL)
-        }
+        // 内容变化时重载（如编辑返回后刷新）；字符串相同则不重载，避免闪烁
+        guard context.coordinator.lastHTML != html else { return }
+        context.coordinator.lastHTML = html
+        uiView.loadHTMLString(html, baseURL: AppSettings.shared.serverURL)
     }
 }

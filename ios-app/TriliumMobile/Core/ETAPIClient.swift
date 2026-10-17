@@ -174,11 +174,18 @@ struct ETAPIClient {
             if (try? await getNote(s.inboxNoteId)) != nil { return s.inboxNoteId }
         }
         let root = try await getNote("root")
-        for childId in root.childNoteIds ?? [] {
-            if let n = try? await getNote(childId), n.title == s.inboxTitle {
-                s.inboxNoteId = childId
-                return childId
+        // 并发拉 root 子笔记（旧版串行逐个 getNote，N+1 慢）
+        let children: [Note] = await withTaskGroup(of: Note?.self) { group -> [Note] in
+            for id in root.childNoteIds ?? [] {
+                group.addTask { try? await self.getNote(id) }
             }
+            var out: [Note] = []
+            for case let n? in group { out.append(n) }
+            return out
+        }
+        if let hit = children.first(where: { $0.title == s.inboxTitle }) {
+            s.inboxNoteId = hit.noteId
+            return hit.noteId
         }
         let created = try await createNote(parentNoteId: "root", title: s.inboxTitle)
         s.inboxNoteId = created.note.noteId

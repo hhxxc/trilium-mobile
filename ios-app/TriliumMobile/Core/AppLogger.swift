@@ -31,9 +31,14 @@ final class AppLogger {
         UserDefaults.standard.removeObject(forKey: key)
     }
 
-    private static func timestamp() -> String {
+    // 缓存 formatter：DateFormatter 创建开销大，不能每次 log 都新建
+    private static let formatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MM-dd HH:mm:ss"
-        return f.string(from: Date())
+        return f
+    }()
+
+    private static func timestamp() -> String {
+        formatter.string(from: Date())
     }
 }

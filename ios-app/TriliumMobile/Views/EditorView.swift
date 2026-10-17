@@ -34,10 +34,14 @@ struct EditorView: View {
 
 /// 包装 WKWebView 的 SwiftUI 视图
 struct TriliumWebView: UIViewRepresentable {
+    // 共享进程池：cookie/登录态/缓存跨 WebView 复用，二次打开编辑器明显更快
+    static let sharedProcessPool = WKProcessPool()
+
     let url: URL
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        config.processPool = TriliumWebView.sharedProcessPool
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.navigationDelegate = context.coordinator
         wv.load(URLRequest(url: url))
