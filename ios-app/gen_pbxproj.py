@@ -467,7 +467,9 @@ ext_tgt_debug = (
     f'\t\t\t\t);\n'
     f'\t\t\t\tMARKETING_VERSION = 1.0.0;\n'
     f'\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.hhxxc.trilium.ShareExtension;\n'
-    f'\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";\n'
+    # ⚠️ 必须是 TriliumShare（与 Embed phase 引用的 TriliumShare.appex 一致）。
+    #   写 $(TARGET_NAME) 会产出 ShareExtension.appex → 嵌入静默跳过 → 打包报「分享扩展未嵌入」
+    f'\t\t\t\tPRODUCT_NAME = TriliumShare;\n'
     f'\t\t\t\tSKIP_INSTALL = YES;\n'
     f'\t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;\n'
     f'\t\t\t\tSWIFT_VERSION = 5.0;\n'
@@ -493,7 +495,9 @@ ext_tgt_release = (
     f'\t\t\t\t);\n'
     f'\t\t\t\tMARKETING_VERSION = 1.0.0;\n'
     f'\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.hhxxc.trilium.ShareExtension;\n'
-    f'\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";\n'
+    # ⚠️ 必须是 TriliumShare（与 Embed phase 引用的 TriliumShare.appex 一致）。
+    #   写 $(TARGET_NAME) 会产出 ShareExtension.appex → 嵌入静默跳过 → 打包报「分享扩展未嵌入」
+    f'\t\t\t\tPRODUCT_NAME = TriliumShare;\n'
     f'\t\t\t\tSKIP_INSTALL = YES;\n'
     f'\t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;\n'
     f'\t\t\t\tSWIFT_VERSION = 5.0;\n'
