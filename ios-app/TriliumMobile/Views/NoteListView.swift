@@ -8,6 +8,8 @@ struct NoteListView: View {
     @State private var errorMsg = ""
     @State private var showCompose = false
     @State private var searchQuery = ""
+    @State private var noteToDelete: Note?
+    @State private var deleting = false
     /// 加载代数：并发触发 load（防抖任务 + 下拉刷新）时丢弃过期响应，防旧结果覆盖新结果
     @State private var loadGeneration = 0
 
@@ -36,6 +38,15 @@ struct NoteListView: View {
         .sheet(isPresented: $showCompose) {
             ComposeView(onSaved: { await load() })
         }
+        .confirmationDialog(
+            "删除「\(noteToDelete?.title ?? "")」？子笔记将一并删除，不可恢复。",
+            isPresented: Binding(get: { noteToDelete != nil },
+                                 set: { if !$0 { noteToDelete = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("删除", role: .destructive) { Task { await deleteNote() } }
+            Button("取消", role: .cancel) { noteToDelete = nil }
+        }
     }
 
     @ViewBuilder
@@ -53,10 +64,11 @@ struct NoteListView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if notes.isEmpty {
             VStack(spacing: 12) {
-                Image(systemName: "tray")
+                Image(systemName: isSearching ? "magnifyingglass" : "tray")
                     .font(.system(size: 40)).foregroundColor(.secondary)
-                Text("没有笔记").font(.footnote).foregroundColor(.secondary)
-                Button("刷新试试") { Task { await load() } }
+                Text(isSearching ? "未找到相关笔记" : "没有笔记")
+                    .font(.footnote).foregroundColor(.secondary)
+                Button(isSearching ? "换个关键词试试" : "刷新试试") { Task { await load() } }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -67,24 +79,34 @@ struct NoteListView: View {
                 if isSearching {
                     // 搜索结果平铺（分组反而碍事）
                     ForEach(notes) { note in
-                        NavigationLink(destination: NoteDetailView(note: note)) {
-                            NoteRow(note: note)
-                        }
+                        listRow(note)
                     }
                 } else {
                     // 浏览模式按时间分组（有道云风格）
                     ForEach(timeGroups.filter { !$0.notes.isEmpty }, id: \.title) { g in
                         Section(g.title) {
                             ForEach(g.notes) { note in
-                                NavigationLink(destination: NoteDetailView(note: note)) {
-                                    NoteRow(note: note)
-                                }
+                                listRow(note)
                             }
                         }
                     }
                 }
             }
             .listStyle(.plain)
+        }
+    }
+
+    /// 列表行（搜索/分组两处共用）：进详情 + 长按删除
+    private func listRow(_ note: Note) -> some View {
+        NavigationLink(destination: NoteDetailView(note: note)) {
+            NoteRow(note: note)
+        }
+        .contextMenu {
+            Button(role: .destructive) {
+                noteToDelete = note
+            } label: {
+                Label("删除笔记", systemImage: "trash")
+            }
         }
     }
 
@@ -145,6 +167,23 @@ struct NoteListView: View {
             }
         }
         loading = false
+    }
+
+    /// 删除笔记：服务端 DELETE → 清本地缓存 → 从列表移除（无需整页重载）
+    private func deleteNote() async {
+        guard let note = noteToDelete else { return }
+        deleting = true
+        do {
+            try await ETAPIClient.shared.deleteNote(note.noteId)
+            NoteCache.shared.remove(note.noteId)
+            notes.removeAll { $0.noteId == note.noteId }
+            AppLogger.shared.log("已删除笔记: \(note.title)")
+        } catch {
+            AppLogger.shared.log("删除失败: \(error.localizedDescription)")
+            errorMsg = "删除失败：\(error.localizedDescription)"
+        }
+        deleting = false
+        noteToDelete = nil
     }
 }
 

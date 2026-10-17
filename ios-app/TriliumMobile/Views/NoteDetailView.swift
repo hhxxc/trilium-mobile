@@ -6,6 +6,7 @@ import WebKit
 /// 编辑统一用原生编辑（text/code 用 TextEditor 改标题+正文；复杂类型给「用网页编辑器」兜底）。
 struct NoteDetailView: View {
     let note: Note
+    @EnvironmentObject private var settings: AppSettings
 
     @State private var textContent: String = ""
     @State private var imageData: Data?
@@ -13,11 +14,25 @@ struct NoteDetailView: View {
     @State private var hasLoadedOnce = false
     @State private var errorMsg = ""
     @State private var showEditor = false
+    @State private var shareURL: URL?
     /// 编辑改标题后的最新标题（note 是 let，PATCH 后靠这里刷新显示）
     @State private var freshTitle: String = ""
     @State private var freshType: String = ""
 
     private var displayTitle: String { freshTitle.isEmpty ? note.title : freshTitle }
+
+    /// 阅读字号档位（⚠️ 别用 tuple 数组 + id:\.0 —— Swift keypath 不支持 tuple 元素，编译炸）
+    private struct FontOption: Identifiable {
+        let scale: Double
+        let label: String
+        var id: Double { scale }
+    }
+    private static let fontOptions = [
+        FontOption(scale: 0.85, label: "小"),
+        FontOption(scale: 1.0, label: "标准"),
+        FontOption(scale: 1.2, label: "大"),
+        FontOption(scale: 1.4, label: "特大"),
+    ]
 
     var body: some View {
         Group {
@@ -36,10 +51,40 @@ struct NoteDetailView: View {
         .navigationTitle(displayTitle.isEmpty ? "笔记" : displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                if note.type == "text" || note.type == "code" || note.type == "render" {
+                    // 阅读字号：四档缩放，持久化，改动即生效（html diff 自动重载）
+                    Menu {
+                        ForEach(Self.fontOptions) { opt in
+                            Button {
+                                settings.readerFontScale = opt.scale
+                            } label: {
+                                if settings.readerFontScale == opt.scale {
+                                    Label(opt.label, systemImage: "checkmark")
+                                } else {
+                                    Text(opt.label)
+                                }
+                            }
+                        }
+                    } label: {
+                        Text("Aa").font(.callout.weight(.medium))
+                    }
+
+                    Button {
+                        shareNote()
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
                 if note.type == "text" || note.type == "code" {
                     Button("编辑") { showEditor = true }
                 }
+            }
+        }
+        .sheet(isPresented: Binding(get: { shareURL != nil },
+                                    set: { if !$0 { shareURL = nil } })) {
+            if let url = shareURL {
+                ShareSheet(items: [url])
             }
         }
         // ⚠️ 编辑返回必须 force 刷新：普通 load() 会命中本地缓存显示**旧内容**（编辑白改）
@@ -47,6 +92,25 @@ struct NoteDetailView: View {
             NativeEditorView(note: note, initialContent: textContent)
         }
         .task { await load() }
+    }
+
+    /// 导出为 HTML 文件分享（AirDrop / 备忘录 / 其他 App 均可收）
+    private func shareNote() {
+        let html = NoteHTML.wrap(title: displayTitle, raw: textContent,
+                                 noteType: note.type, fontScale: settings.readerFontScale)
+        let safeName = displayTitle
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+            .replacingOccurrences(of: "?", with: "_")
+        let name = safeName.isEmpty ? "note" : safeName
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(name).html")
+        do {
+            try html.data(using: .utf8)?.write(to: url)
+            shareURL = url
+        } catch {
+            AppLogger.shared.log("导出失败: \(error.localizedDescription)")
+        }
     }
 
     @ViewBuilder
@@ -66,11 +130,11 @@ struct NoteDetailView: View {
         case "file":
             fileView
         case "code":
-            ContentWebView(html: NoteHTML.wrap(title: note.title, raw: textContent, noteType: "code"))
+            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "code", fontScale: settings.readerFontScale))
         case "render":
-            ContentWebView(html: NoteHTML.wrap(title: note.title, raw: textContent, noteType: "render"))
+            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "render", fontScale: settings.readerFontScale))
         case "text":
-            ContentWebView(html: NoteHTML.wrap(title: note.title, raw: textContent, noteType: "text"))
+            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "text", fontScale: settings.readerFontScale))
         default:
             fallback(typeName: note.type, icon: "doc.text")
         }
@@ -244,7 +308,7 @@ enum NoteHTML {
             let mobileCSS = """
             <style>
               body { font-family: -apple-system, "PingFang SC", sans-serif;
-                     font-size: 17px; line-height: 1.75; padding: 16px 18px 60px;
+                     font-size: \(fontSize)px; line-height: 1.75; padding: 16px 18px 60px;
                      word-wrap: break-word; -webkit-text-size-adjust: 100%; }
               img { max-width: 100%; height: auto; }
               pre { overflow-x: auto; }
@@ -331,4 +395,15 @@ struct ContentWebView: UIViewRepresentable {
         context.coordinator.lastHTML = html
         uiView.loadHTMLString(html, baseURL: AppSettings.shared.serverURL)
     }
+}
+
+/// 系统分享面板（UIActivityViewController 包装）
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
