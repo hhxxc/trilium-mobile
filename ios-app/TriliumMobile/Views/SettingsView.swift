@@ -30,8 +30,8 @@ struct SettingsView: View {
 
                 Section {
                     Button("退出登录", role: .destructive) {
-                        Task { await ETAPIClient.shared.logout() }
                         settings.logout()
+                        dismiss()  // 关键：先关 sheet，否则登录页被设置面板挡住，看着像"没反应"
                     }
                 }
 
