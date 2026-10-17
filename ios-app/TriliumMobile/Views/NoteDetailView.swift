@@ -18,6 +18,10 @@ struct NoteDetailView: View {
     @State private var shareURL: URL?
     /// 笔记内链接点击后打开的目标笔记（sheet(item:)）
     @State private var linkedNote: Note?
+    /// 大纲目录：JS 上报的 h1~h3；点击条目 → outlineJump 驱动 ContentWebView 滚动
+    @State private var outlineItems: [OutlineItem] = []
+    @State private var showOutline = false
+    @State private var outlineJump: Int?
     // 附件预览状态
     @State private var fileDownloading = false
     @State private var fileProgress: Double = 0
@@ -61,6 +65,12 @@ struct NoteDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 if note.type == "text" || note.type == "code" || note.type == "render" {
+                    // 大纲目录：JS 提取 h1~h3 上报，非空才显示入口
+                    if !outlineItems.isEmpty {
+                        Button { showOutline = true } label: {
+                            Image(systemName: "list.bullet.indent")
+                        }
+                    }
                     // 阅读字号：四档缩放，持久化，改动即生效（html diff 自动重载）
                     Menu {
                         ForEach(Self.fontOptions) { opt in
@@ -103,6 +113,33 @@ struct NoteDetailView: View {
         .sheet(item: $linkedNote) { linked in
             NavigationView {
                 NoteDetailView(note: linked)
+            }
+            .navigationViewStyle(.stack)
+        }
+        // 大纲目录：点击条目关闭面板并跳到对应标题
+        .sheet(isPresented: $showOutline) {
+            NavigationView {
+                List(outlineItems) { item in
+                    Button {
+                        showOutline = false
+                        outlineJump = nil
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { outlineJump = item.id }
+                    } label: {
+                        Text(item.text)
+                            .font(item.level == 1 ? .body.weight(.medium) : .subheadline)
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                            .padding(.leading, CGFloat(item.level - 1) * 14)
+                    }
+                }
+                .listStyle(.plain)
+                .navigationTitle("目录")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("关闭") { showOutline = false }
+                    }
+                }
             }
             .navigationViewStyle(.stack)
         }
@@ -151,11 +188,11 @@ struct NoteDetailView: View {
         case "file":
             fileView
         case "code":
-            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "code", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote)
+            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "code", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote, onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump)
         case "render":
-            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "render", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote)
+            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "render", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote, onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump)
         case "text":
-            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "text", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote)
+            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "text", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote, onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump)
         default:
             fallback(typeName: note.type, icon: "doc.text")
         }
@@ -420,6 +457,15 @@ enum NoteHTML {
         document.addEventListener(ev, function() { clearTimeout(timer); }, { passive: true });
       });
     })();
+    // 大纲上报：收集 h1~h3 发给原生（大纲目录入口用）
+    document.addEventListener('DOMContentLoaded', function() {
+      var out = [];
+      document.querySelectorAll('h1,h2,h3').forEach(function(h) {
+        out.push([parseInt(h.tagName.substring(1), 10), h.textContent.trim()]);
+      });
+      window.webkit && window.webkit.messageHandlers.outline &&
+        window.webkit.messageHandlers.outline.postMessage(out);
+    });
     </script>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -559,28 +605,50 @@ struct ContentWebView: UIViewRepresentable {
     var noteId: String = ""
     /// 点击笔记内链接时回调（Trilium 链接 → App 内打开该笔记）
     var onOpenNote: ((String) -> Void)? = nil
+    /// JS 上报的大纲（h1~h3）
+    var onOutline: (([OutlineItem]) -> Void)? = nil
+    /// 跳转到大纲第 index 项（变化时驱动 evaluateJavaScript 滚动）
+    var jumpToIndex: Int? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(noteId: noteId, onOpenNote: onOpenNote)
+        Coordinator(noteId: noteId, onOpenNote: onOpenNote, onOutline: onOutline)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, UIScrollViewDelegate, WKScriptMessageHandler {
         let noteId: String
         let onOpenNote: ((String) -> Void)?
+        let onOutline: (([OutlineItem]) -> Void)?
         var lastHTML = ""
         var hasRestored = false
         var lastSaveTime: TimeInterval = 0
+        var lastJump: Int?
+        weak var webView: WKWebView?
 
-        init(noteId: String, onOpenNote: ((String) -> Void)?) {
+        init(noteId: String, onOpenNote: ((String) -> Void)?, onOutline: (([OutlineItem]) -> Void)?) {
             self.noteId = noteId
             self.onOpenNote = onOpenNote
+            self.onOutline = onOutline
         }
 
-        /// JS 长按图片 → postMessage("imgsave") → 下载 → 存相册
+        /// JS 长按图片 → postMessage("imgsave") → 下载 → 存相册；"outline" → 大纲上报
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
-            guard message.name == "imgsave", let src = message.body as? String, !src.isEmpty else { return }
-            saveImageToPhotos(src: src)
+            switch message.name {
+            case "imgsave":
+                guard let src = message.body as? String, !src.isEmpty else { return }
+                saveImageToPhotos(src: src)
+            case "outline":
+                guard let arr = message.body as? [[Any]] else { return }
+                var items: [OutlineItem] = []
+                for (i, row) in arr.enumerated() {
+                    if row.count >= 2, let lvl = row[0] as? Int, let txt = row[1] as? String, !txt.isEmpty {
+                        items.append(OutlineItem(id: i, level: lvl, text: txt))
+                    }
+                }
+                DispatchQueue.main.async { [onOutline] in onOutline?(items) }
+            default:
+                break
+            }
         }
 
         private func saveImageToPhotos(src: String) {
@@ -696,8 +764,11 @@ struct ContentWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let cfg = WKWebViewConfiguration()
-        cfg.userContentController.add(context.coordinator, name: "imgsave")
+        let ucc = cfg.userContentController
+        ucc.add(context.coordinator, name: "imgsave")
+        ucc.add(context.coordinator, name: "outline")
         let wv = WKWebView(frame: .zero, configuration: cfg)
+        context.coordinator.webView = wv
         wv.isOpaque = false
         wv.backgroundColor = .clear
         wv.scrollView.backgroundColor = .clear
@@ -709,10 +780,26 @@ struct ContentWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
+        // 跳转索引被重置为 nil 时（同一条目可重复点击）同步清记录
+        if jumpToIndex == nil { context.coordinator.lastJump = nil }
+        // 大纲跳转：索引变化时驱动 WebView 滚动到对应标题
+        if let idx = jumpToIndex, context.coordinator.lastJump != idx {
+            context.coordinator.lastJump = idx
+            uiView.evaluateJavaScript(
+                "document.querySelectorAll('h1,h2,h3')[\(idx)].scrollIntoView({behavior:'smooth'})",
+                completionHandler: nil)
+        }
         guard context.coordinator.lastHTML != html else { return }
         context.coordinator.lastHTML = html
         uiView.loadHTMLString(html, baseURL: AppSettings.shared.serverURL)
     }
+}
+
+/// 大纲目录条目（id = h1~h3 NodeList 中的下标，跳转时按同序查询）
+struct OutlineItem: Identifiable {
+    let id: Int
+    let level: Int
+    let text: String
 }
 
 /// 系统分享面板（UIActivityViewController 包装）
