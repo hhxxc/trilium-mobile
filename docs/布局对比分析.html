@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>笔记 App 布局排版对比分析 — Trilium Mobile</title>
+<style>
+  :root {
+    --ink: #1c1c1e; --ink2: #4a4a4f; --ink3: #8e8e93;
+    --line: rgba(0,0,0,.09); --bg: #fafaf8; --card: #fff;
+    --accent: #0f766e; --accent-soft: #e6f4f1;
+    --warn: #b45309; --warn-soft: #fdf4e7;
+    --bad: #b91c1c; --bad-soft: #fdeeee;
+    --good: #15803d; --good-soft: #ecf7ef;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 15px; line-height: 1.75; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 48px 24px 80px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 28px; margin-bottom: 40px; }
+  .kicker { font-size: 12px; letter-spacing: .12em; color: var(--accent); font-weight: 600; text-transform: uppercase; }
+  h1 { font-size: 30px; line-height: 1.3; margin: 10px 0 12px; letter-spacing: -.01em; }
+  .sub { color: var(--ink2); font-size: 15px; margin: 0; }
+  .meta { color: var(--ink3); font-size: 13px; margin-top: 14px; }
+
+  h2 { font-size: 21px; margin: 52px 0 8px; letter-spacing: -.01em; }
+  h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  h3 { font-size: 16px; margin: 28px 0 8px; }
+  p { margin: 10px 0; color: var(--ink); }
+  .lead { color: var(--ink2); }
+
+  .product { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; margin: 18px 0; }
+  .product-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .product-head strong { font-size: 17px; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .tag.blue { background: #eaf1fb; color: #1d4ed8; }
+  .tag.amber { background: var(--warn-soft); color: var(--warn); }
+  .tag.red { background: var(--bad-soft); color: var(--bad); }
+
+  .pros, .cons { margin: 12px 0 0; padding-left: 0; list-style: none; }
+  .pros li, .cons li { position: relative; padding-left: 22px; margin: 6px 0; font-size: 14px; }
+  .pros li::before { content: "＋"; position: absolute; left: 0; color: var(--good); font-weight: 700; }
+  .cons li::before { content: "−"; position: absolute; left: 0; color: var(--bad); font-weight: 700; }
+
+  .sketch {
+    display: flex; gap: 10px; align-items: stretch; margin: 14px 0 6px;
+    background: #f6f6f4; border-radius: 10px; padding: 12px;
+  }
+  .sk { flex: 1; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; color: var(--ink2); line-height: 1.5; }
+  .sk b { display: block; font-size: 12px; color: var(--ink); margin-bottom: 4px; }
+  .sk .bar { height: 5px; background: #e8e8e4; border-radius: 3px; margin: 5px 0; }
+  .sk .bar.w70 { width: 70%; } .sk .bar.w50 { width: 50%; } .sk .bar.w90 { width: 90%; }
+  .sk .chip { display: inline-block; padding: 1px 7px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 11px; margin: 2px 2px 0 0; }
+
+  table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #f2f2ef; font-weight: 600; font-size: 13px; }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+  .yes { color: var(--good); font-weight: 600; }
+  .no { color: var(--bad); font-weight: 600; }
+  .mid { color: var(--warn); font-weight: 600; }
+
+  .callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 18px 0; font-size: 14px; }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout.bad { border-color: var(--bad); background: var(--bad-soft); }
+  .callout b { color: inherit; }
+
+  .prio { display: flex; gap: 10px; margin: 8px 0 0; flex-wrap: wrap; }
+  .p0, .p1, .p2 { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 5px; }
+  .p0 { background: var(--bad-soft); color: var(--bad); }
+  .p1 { background: var(--warn-soft); color: var(--warn); }
+  .p2 { background: #eef0f2; color: var(--ink2); }
+
+  .item { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin: 14px 0; }
+  .item h4 { margin: 0 0 6px; font-size: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .item p { font-size: 14px; margin: 6px 0 0; color: var(--ink2); }
+  .item code { background: #f4f4f1; padding: 1px 6px; border-radius: 4px; font-size: 12.5px; font-family: ui-monospace, Menlo, monospace; }
+
+  footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--ink3); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Design Research</div>
+  <h1>笔记 App 布局排版对比分析</h1>
+  <p class="sub">五款成熟产品的移动端结构拆解 —— 以及哪几条该搬进你的 Trilium 客户端</p>
+  <div class="meta">分析对象：有道云笔记 · 苹果备忘录 · Obsidian · 思源笔记 · flomo　｜　2026-10-17</div>
+</header>
+
+<h2><span class="num">01</span>先说结论</h2>
+<p>你的 App 现在最大问题不是「少了功能」，而是<strong>信息骨架和手势路径不对</strong>。成熟产品在手机上做对了四件事，而你现在四条都缺：</p>
+<div class="callout">
+  <b>① 首屏必须「一眼看到内容」</b>——不是看到入口、图标、加载圈。<br>
+  <b>② 层级浏览要「就地展开」</b>——不是跳进跳出、反复返回。<br>
+  <b>③ 记录入口要「零摩擦」</b>——打开就能写，不选分类。<br>
+  <b>④ 所有高频操作要「单手可达」</b>——拇指区域，不是左上角。
+</div>
+<p class="lead">下面逐个拆，最后给你一份按优先级排的改造清单。</p>
+
+<h2><span class="num">02</span>五款产品，各自做对了什么</h2>
+
+<div class="product">
+  <div class="product-head">
+    <strong>有道云笔记</strong>
+    <span class="tag">抽屉式 · 列表优先</span>
+    <span class="tag amber">和你当前定位最接近</span>
+  </div>
+  <p class="lead">产品负责人亲自讲过设计思路，核心一句话：<em>「浏览行为需要最大化、没有干扰的展示空间，随手记录追求更快更轻」</em>。</p>
+  <div class="sketch">
+    <div class="sk"><b>首屏 = 最近笔记列表</b>
+      <div class="bar w90"></div><span class="chip">标题</span><span class="chip">正文摘要</span><span class="chip">图片缩略</span>
+      <div class="bar w70"></div><div class="bar w50"></div>
+      <div style="margin-top:6px;color:#0f766e">右下角「＋」新建</div>
+    </div>
+    <div class="sk"><b>左滑出抽屉</b>
+      <div class="bar w70"></div>
+      <div style="margin:4px 0">头像 / 账号在最顶</div>
+      <div class="bar w90"></div><div class="bar w50"></div>
+      <div style="margin-top:6px;color:#8e8e93">文件夹 · 标签 · 设置</div>
+    </div>
+  </div>
+  <ul class="pros">
+    <li><b>列表里不只有标题</b>：正文摘要、图片缩略、附件摘要一起展示——用户认为「内容和标题同样重要」，靠这个实现快速定位</li>
+    <li><b>抽屉放低频功能</b>：主界面只留浏览，文件夹/标签/设置都收进左滑抽屉，展示空间最大化</li>
+    <li><b>列表节奏感有讲究</b>：图片/附件在视觉上比文字"重"，他们专门做了处理避免列表凌乱</li>
+  </ul>
+  <ul class="cons">
+    <li>层级深了之后抽屉要反复开合，深层目录定位效率一般</li>
+  </ul>
+</div>
+
+<div class="product">
+  <div class="product-head">
+    <strong>苹果备忘录</strong>
+    <span class="tag">系统级手感</span>
+  </div>
+  <div class="sketch">
+    <div class="sk"><b>三层结构</b>
+      <div class="bar w50"></div><div style="margin:4px 0">文件夹 → 列表 → 内容</div>
+      <div class="bar w90"></div><div class="bar w70"></div>
+    </div>
+    <div class="sk"><b>列表行</b>
+      <b style="font-size:13px">标题</b>
+      <div style="color:#8e8e93;font-size:12px">正文摘要…</div>
+      <div style="color:#8e8e93;font-size:11px;margin-top:3px">时间</div>
+    </div>
+  </div>
+  <ul class="pros">
+    <li><b>列表行三要素</b>：粗标题 + 一行灰色摘要 + 小字时间。信息密度和呼吸感平衡得最好</li>
+    <li><b>大标题 + 搜索框常驻顶部</b>：滚动时大标题收缩，内容始终最大化</li>
+    <li><b>系统级字体</b>：正文 17pt、行距宽松，中文阅读非常舒服</li>
+    <li><b>右下角新建按钮</b>，单手拇指正好够到</li>
+  </ul>
+  <ul class="cons">
+    <li>文件夹层级很弱（只有一层），不适合树状知识库</li>
+  </ul>
+</div>
+
+<div class="product">
+  <div class="product-head">
+    <strong>Obsidian</strong>
+    <span class="tag blue">树状结构 · 和你同构</span>
+  </div>
+  <p class="lead">它把桌面版的「双侧栏」搬到了手机上，靠手势解决屏幕小的问题。</p>
+  <div class="sketch">
+    <div class="sk"><b>左滑唤出</b>
+      <div class="bar w90"></div><div class="bar w70"></div>
+      <div style="margin-top:4px;color:#0f766e">文件树 · 搜索 · 书签</div>
+    </div>
+    <div class="sk"><b>编辑区</b>
+      <div class="bar w90"></div><div class="bar w70"></div>
+      <div style="margin-top:4px">底部导航：← → ＋ 标签页 ☰</div>
+    </div>
+    <div class="sk"><b>右滑唤出</b>
+      <div class="bar w70"></div>
+      <div style="margin-top:4px;color:#1d4ed8">反链 · 大纲 · 属性</div>
+    </div>
+  </div>
+  <ul class="pros">
+    <li><b>树就在侧栏里</b>，不占主屏——但和电脑版完全同步同一套结构</li>
+    <li><b>底部导航栏</b>：前进/后退 + 新建 + 标签页切换，都在拇指区</li>
+    <li><b>编辑器上方的快捷工具栏</b>（Markdown 格式按钮），边写边点，不用记语法</li>
+    <li><b>下拉唤出命令面板</b>：想找什么功能，下拉打字，比翻菜单快一个量级</li>
+  </ul>
+  <ul class="cons">
+    <li>大库启动慢（几千条要 10-20 秒），移动端偏"桌面优先"</li>
+    <li>侧栏手势容易和编辑器内滑动冲突</li>
+  </ul>
+</div>
+
+<div class="product">
+  <div class="product-head">
+    <strong>思源笔记</strong>
+    <span class="tag blue">文档树 · 和你最近似</span>
+    <span class="tag red">它的差评 = 你的避坑清单</span>
+  </div>
+  <p class="lead">功能和你说最像（文档树 + 块编辑），但移动端被用户骂得很具体。这些差评几乎就是你现在 App 的问题复刻。</p>
+  <ul class="cons">
+    <li><b>「感觉手机端就是电脑版简单换了布局，完全沿用桌面操作逻辑」</b> ← 你之前直接加载 Trilium 网页编辑器，一模一样的问题</li>
+    <li><b>「图标小小的，非常容易误触，单手几乎没法操作」</b> ← 点击区域要 ≥44pt</li>
+    <li><b>「打开下一个文档要在屏幕左上角点两次，每次都要把手机放桌上操作」</b> ← 高频操作必须在拇指区</li>
+    <li><b>「文档树/书签/搜索/最近浏览这四个核心功能，都要 2-3 步操作」</b> ← 核心浏览入口必须一步直达</li>
+    <li><b>「UI 像老软件，放大图标、加圆角、加点过渡动画，整体就有活力了」</b></li>
+  </ul>
+  <ul class="pros">
+    <li>块状内容管理、离线优先、大文档流式加载（技术底子好）</li>
+  </ul>
+  <div class="callout warn">
+    <b>用户的改进建议（可直接抄）：</b>文档树图标放右边好单手够到；左右滑切文档树/大纲；下滑上滑切换上下篇；常用按键放屏幕下方；主界面放大图标入口（笔记本/书签/最近）。
+  </div>
+</div>
+
+<div class="product">
+  <div class="product-head">
+    <strong>flomo 浮墨</strong>
+    <span class="tag">极简 · 零摩擦记录</span>
+  </div>
+  <div class="sketch">
+    <div class="sk"><b>首屏</b>
+      <div style="border:1px solid #ddd;border-radius:8px;padding:8px;margin-bottom:6px;color:#8e8e93">想记点什么…</div>
+      <div class="bar w90"></div><div class="bar w70"></div>
+      <div style="margin-top:6px;color:#0f766e">输入框即全部入口</div>
+    </div>
+    <div class="sk"><b>没有文件夹</b>
+      <span class="chip">#工作</span><span class="chip">#读书</span><span class="chip">#灵感</span>
+      <div style="margin-top:6px">标签代替层级，一卡多签</div>
+    </div>
+  </div>
+  <ul class="pros">
+    <li><b>打开即输入</b>，不选分类不排版——「记录比整理更重要」</li>
+    <li><b>编辑时关掉所有工具栏</b>：只有白纸和键盘，零干扰</li>
+    <li><b>标签替代文件夹</b>：不用纠结「放哪个文件夹」，一条可多个标签</li>
+    <li><b>每日回顾推送</b>：旧笔记会被重新推到面前</li>
+  </ul>
+  <ul class="cons">
+    <li>没有层级结构，深度的知识体系撑不住（你是树状库，不能全学它）</li>
+  </ul>
+</div>
+
+<h2><span class="num">03</span>横向对比：七个关键维度</h2>
+<table>
+  <thead>
+    <tr><th>维度</th><th>有道云</th><th>备忘录</th><th>Obsidian</th><th>思源</th><th>flomo</th><th style="background:#e6f4f1">你的 App 现状</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>首屏内容</td><td>最近列表</td><td>文件夹</td><td>上次笔记</td><td>文档树</td><td>输入框</td><td class="mid">最近列表（含摘要？缺）</td></tr>
+    <tr><td>层级浏览</td><td>抽屉</td><td>1 层</td><td>左滑侧栏</td><td>主导航树</td><td class="no">无</td><td class="mid">顶部分段切换</td></tr>
+    <tr><td>树是否就地展开</td><td class="no">跳转</td><td class="no">跳转</td><td class="yes">是</td><td class="yes">是</td><td>—</td><td class="yes">v1.2.7 已改成是</td></tr>
+    <tr><td>新建入口</td><td>右下＋</td><td>右下✎</td><td>底部栏＋</td><td>右上</td><td>首屏输入框</td><td class="yes">右下＋</td></tr>
+    <tr><td>列表信息密度</td><td>标题+摘要+缩略</td><td>标题+摘要+时间</td><td>纯标题</td><td>纯标题</td><td>全文卡片</td><td class="no">标题+时间（太薄）</td></tr>
+    <tr><td>单手可达性</td><td class="yes">好</td><td class="yes">好</td><td class="mid">中</td><td class="no">差</td><td class="yes">好</td><td class="mid">切换器在顶部</td></tr>
+    <tr><td>阅读排版</td><td>一般</td><td class="yes">优秀</td><td>看主题</td><td>一般</td><td>极简</td><td class="mid">17px/1.75 已有，可再调</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="num">04</span>你的 App：现状诊断</h2>
+<p class="lead">对照截图和代码，问题按「用户能感知到的程度」排序：</p>
+
+<div class="callout bad">
+  <b>1. 列表行信息太薄</b>——只有「标题 + 时间」。你的库里全是「密码」「网线线序」「车辆继承过户」这种短标题，光看标题根本分不清内容。有道云和备忘录都在列表里给一行正文摘要。
+</div>
+<div class="callout bad">
+  <b>2. 视图切换器在顶部，单手够不到</b>——「最近 / 目录」分段控件放在标题下方（我上一版为了绕开 iOS 15 的 toolbar bug 挪上去的），但它在拇指区之外。思源被骂的第一条就是这个。
+</div>
+<div class="callout warn">
+  <b>3. 树和列表是「二选一」</b>——切到目录就看不到最近，切回最近就用不了树。有道云用抽屉共存（左滑出树、主屏留列表），Obsidian 用侧栏，都比二选一顺。
+</div>
+<div class="callout warn">
+  <b>4. 导航层级不透明</b>——点进笔记后，不清楚自己在树的哪一支，回上一级要按返回。面包屑只有树里有，阅读页没有。
+</div>
+<div class="callout">
+  <b>5. 视觉缺少「呼吸感」</b>——列表行、分段控件、按钮都偏紧凑；圆角、间距、层级阴影缺少系统性的节奏。
+</div>
+
+<h2><span class="num">05</span>改造清单（按性价比排序）</h2>
+
+<div class="item">
+  <h4>① 列表行加正文摘要 <span class="p0">P0 · 最划算</span></h4>
+  <p>列表行改成三行结构：<b>标题（15-16pt 中等）</b> / <b>正文摘要一行（13pt 灰）</b> / <b>时间（11pt 更浅）</b>。摘要来源：读过的笔记用缓存内容，没读过的首次不摘要（不强求）。</p>
+  <p>参考：备忘录、有道云。效果：<code>密码</code> 下面能看到「微信/支付宝/银行卡…」，一眼分清。</p>
+</div>
+
+<div class="item">
+  <h4>② 视图切换改到底部（拇指区） <span class="p0">P0</span></h4>
+  <p>把「最近 / 目录」从顶部横条挪到底部——可以做成悬浮胶囊（左下角），或者底部细条工具区。iOS 15 上<code>safeAreaInset(edge: .bottom)</code>稳定可用。</p>
+  <p>同时把右上角「文件夹 / 齿轮」也下移，或干脆收进底部工具区，让右上角彻底清空。</p>
+</div>
+
+<div class="item">
+  <h4>③ 树与列表共存：左滑出目录 <span class="p1">P1 · 结构升级</span></h4>
+  <p>学 Obsidian / 有道云：主界面永远是列表，从屏幕左边缘右滑唤出目录树面板（覆盖式抽屉，占屏 80%）。这样既能一键看最近，又能随时浏览树，不用二选一。</p>
+  <p>实现要点：<code>HStack</code> + <code>offset</code> 动画，或 <code>ZStack</code> 叠层 + <code>DragGesture</code>。注意别和列表横向滑动冲突（只在左边缘 20pt 内响应）。</p>
+</div>
+
+<div class="item">
+  <h4>④ 阅读页加「位置感」+ 底部操作条 <span class="p1">P1</span></h4>
+  <p>阅读页顶部显示面包屑（我的笔记 / 汽车保养相关），点击可跳同级；底部放操作条：<b>编辑</b>、<b>上/下篇</b>（学思源用户建议的上下滑切换）。</p>
+</div>
+
+<div class="item">
+  <h4>⑤ 视觉节奏：统一间距与圆角 <span class="p2">P2 · 感知提升</span></h4>
+  <p>列表行垂直内边距 12-14pt（现在偏紧）；卡片圆角 12pt；分段控件换成胶囊型并加轻微阴影；图标统一 20-22pt，点击热区 ≥44pt（思源被骂「图标小易误触」）。</p>
+</div>
+
+<div class="item">
+  <h4>⑥ 树节点增加「展开状态持久化」 <span class="p2">P2</span></h4>
+  <p>记住上次展开到哪一层（UserDefaults 存已展开 noteId 集合），下次进来直接还原——深目录用户最需要这个。</p>
+</div>
+
+<div class="item">
+  <h4>⑦ 速记升级为「打开即写」 <span class="p2">P2 · 学 flomo</span></h4>
+  <p>现在要点右下「＋」弹窗再写。可以做到：从桌面小组件 / 长按图标直接进输入态，写完自动落收件箱，全程 1-2 步。</p>
+</div>
+
+<h2><span class="num">06</span>别学的地方</h2>
+<ul class="cons">
+  <li><b>别学 flomo 去掉层级</b>——你的库是树状知识体系，强项不能丢</li>
+  <li><b>别学 Obsidian 的双侧栏</b>——两个手势方向在手机上极易误触（思源用户也在骂左右滑）</li>
+  <li><b>别学思源把桌面逻辑搬到手机</b>——这是它被骂最多的一条，也是你之前网页编辑器的老毛病</li>
+  <li><b>别在列表里塞满缩略图</b>——有道云自己也说过，图片/附件会让列表节奏凌乱</li>
+</ul>
+
+<footer>
+  依据：有道云笔记产品负责人设计访谈、Obsidian 官方 Sidebar 文档与移动端评测、思源笔记用户反馈（链滴社区两篇）、flomo 帮助中心与产品评测，以及对当前 App 代码与截图的实测。2026-10-17
+</footer>
+
+</div>
+</body>
+</html>
