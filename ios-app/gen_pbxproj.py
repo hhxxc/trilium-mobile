@@ -145,8 +145,9 @@ for f in RES_FILES:
     )
 for f in EXT_SWIFT_FILES:
     name = os.path.basename(f)
+    # FileRef path 相对于所在 PBXGroup（group 已带 path = ShareExtension），不能再拼前缀
     file_refs.append(
-        f'\t\t{ext_file_ref_ids[f]} /* {name} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareExtension/{f}; sourceTree = "<group>"; }};\n'
+        f'\t\t{ext_file_ref_ids[f]} /* {name} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {f}; sourceTree = "<group>"; }};\n'
     )
 file_refs.append(
     f'\t\t{ext_product_id} /* TriliumShare.appex */ = {{isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TriliumShare.appex; sourceTree = BUILT_PRODUCTS_DIR; }};\n'
