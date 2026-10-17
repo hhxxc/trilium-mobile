@@ -27,7 +27,7 @@ final class ShareViewController: UIViewController {
         title.translatesAutoresizingMaskIntoConstraints = false
 
         let icon = UIImageView(image: UIImage(systemName: "square.and.arrow.down"))
-        icon.tintColor = UIColor(red: 0.17, green: 0.61, blue: 0.56)
+        icon.tintColor = UIColor(red: 0.17, green: 0.61, blue: 0.56, alpha: 1)
         icon.contentMode = .scaleAspectFit
         icon.translatesAutoresizingMaskIntoConstraints = false
 
@@ -47,7 +47,7 @@ final class ShareViewController: UIViewController {
         let save = UIButton(type: .system)
         save.setTitle("存入收件箱", for: .normal)
         save.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
-        save.backgroundColor = UIColor(red: 0.17, green: 0.61, blue: 0.56)
+        save.backgroundColor = UIColor(red: 0.17, green: 0.61, blue: 0.56, alpha: 1)
         save.setTitleColor(.white, for: .normal)
         save.layer.cornerRadius = 12
         save.translatesAutoresizingMaskIntoConstraints = false
@@ -117,9 +117,9 @@ final class ShareViewController: UIViewController {
         for item in items {
             for provider in (item.attachments ?? []) {
                 if provider.hasItemConformingToTypeIdentifier("public.text") {
-                    provider.loadItem(forTypeIdentifier: "public.text", options: nil) { handle($0) }
+                    provider.loadItem(forTypeIdentifier: "public.text", options: nil) { item, _ in handle(item) }
                 } else if provider.hasItemConformingToTypeIdentifier("public.url") {
-                    provider.loadItem(forTypeIdentifier: "public.url", options: nil) { handle($0) }
+                    provider.loadItem(forTypeIdentifier: "public.url", options: nil) { item, _ in handle(item) }
                 }
             }
         }
