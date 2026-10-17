@@ -107,10 +107,9 @@ struct NoteDetailView: View {
         do {
             if force {
                 // 顺带拉最新元数据：编辑器里改过标题/类型时同步显示
-                if let fresh = try await ETAPIClient.shared.getNote(note.noteId) {
-                    freshTitle = fresh.title
-                    freshType = fresh.type
-                }
+                let fresh = try await ETAPIClient.shared.getNote(note.noteId)
+                freshTitle = fresh.title
+                freshType = fresh.type
             }
             switch note.type {
             case "image":
