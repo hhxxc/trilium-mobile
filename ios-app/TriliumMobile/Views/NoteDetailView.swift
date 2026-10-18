@@ -302,13 +302,8 @@ struct NoteDetailView: View {
                 .font(.footnote)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(isPresented: Binding(get: { previewURL != nil },
-                                    set: { if !$0 { previewURL = nil } })) {
-            if let url = previewURL {
-                QuickLookView(fileURL: url)
-                    .ignoresSafeArea(edges: .bottom)
-            }
-        }
+        // ⚠️ 不在这里用 .sheet 包 QuickLook：见 QuickLookPresenter 的说明
+        //   （嵌进 sheet 会没有「完成」按钮、且内部滚动和 sheet 下拉手势打架）
     }
 
     /// 下载附件到稳定缓存目录 → QuickLook 原生预览（PDF/Office/图片通吃）
@@ -341,14 +336,14 @@ struct NoteDetailView: View {
 
         // 1. 已缓存 → 秒开
         if FileManager.default.fileExists(atPath: url.path) {
-            previewURL = url
+            openPreview(url)
             return
         }
         // 2. NoteCache blob 有数据 → 落盘后秒开
         if let cached = NoteCache.shared.loadBlob(note.noteId) {
             do {
                 try cached.write(to: url)
-                previewURL = url
+                openPreview(url)
                 return
             } catch {}
         }
@@ -369,13 +364,19 @@ struct NoteDetailView: View {
             try data.write(to: finalURL, options: .atomic) // 原子写，防中断留半截文件被误判为缓存
             NoteCache.shared.saveBlob(note.noteId, data: data)
             fileDownloading = false
-            previewURL = finalURL
             AppLogger.shared.log("附件下载完成: \(finalURL.lastPathComponent) \(data.count)字节")
+            openPreview(finalURL)
         } catch {
             fileDownloading = false
             fileErrorMsg = "下载失败：\(error.localizedDescription)"
             AppLogger.shared.log("附件下载失败[\(note.title)]: \(error.localizedDescription)")
         }
+    }
+
+    /// 交给 UIKit 原生 present（自带完成按钮 / 滚动 / 缩放 / 分享）
+    private func openPreview(_ url: URL) {
+        previewURL = url                      // 只用来切换按钮文案「重新打开」
+        QuickLookPresenter.shared.present(url)
     }
 
     /// 文件类型的中文说明（比裸 mime 好读）
