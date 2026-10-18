@@ -319,6 +319,8 @@ final class UpdateCenter: NSObject, ObservableObject {
     private var sourceResumeCount = 0
     /// 我们自己主动取消（换源/停表），用来和真正的失败区分
     private var intentionalCancel = false
+    /// 20 秒一次的状态-任务对账巡检（防止「下载中」楔死）
+    private var guardTimer: DispatchSourceTimer?
 
     /// 这些错误码属于「会话级故障」：换源没用，得换通道
     private static let sessionLevelCodes: Set<Int> = [
@@ -349,7 +351,40 @@ final class UpdateCenter: NSObject, ObservableObject {
         lastCheckedAt = UserDefaults.standard.object(forKey: lastCheckKey) as? Date
         restore()
         attachToLiveTasks()
+        startGuardTimer()
         AppLogger.shared.log("更新中心就绪，恢复状态：\(describe(phase))")
+    }
+
+    // MARK: - 巡检（与 UI 无关的兜底，防止状态机卡死）
+
+    /// 每 20 秒把「界面上的状态」和「真实的下载任务」对一次账。
+    /// ⚠️ 为什么要有它：之前几版都出现过「状态=下载中，但任务早没了」的楔死情况，
+    ///   而所有恢复路径都挂在 UI 上（打开更新页 / 点检查更新），用户不点就永远卡着。
+    ///   巡检不看 UI，只认事实 —— 状态说在下载却没有任务，就自己纠正。
+    private func startGuardTimer() {
+        guardTimer?.cancel()
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + 20, repeating: 20)
+        t.setEventHandler { [weak self] in self?.guardTick() }
+        t.resume()
+        guardTimer = t
+    }
+
+    private func guardTick() {
+        // ① 说在下载，但没有活任务 → 重置并重新安排
+        if phase.isDownloading, currentTask == nil {
+            AppLogger.shared.log("巡检：状态为下载中但无任务 → 重置为空闲")
+            phase = .idle
+            persist()
+            Task { await silentCheck(minInterval: 0, ignoreCooldown: true) }
+            return
+        }
+        // ② 有任务但两分钟没有任何字节 → 兜底换源（正常情况看门狗 40s 就该动手了）
+        if phase.isDownloading, currentTask != nil,
+           Date().timeIntervalSince(lastProgressAt) > 120 {
+            AppLogger.shared.log("巡检：120 秒无字节，放弃当前下载源")
+            abandonCurrentSource()
+        }
     }
 
     /// 后台会话配置（重建时复用，两处必须完全一致）
