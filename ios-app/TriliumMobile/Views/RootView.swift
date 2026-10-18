@@ -97,7 +97,7 @@ struct RootView: View {
             VStack(spacing: 16) {
                 Image(systemName: "lock.shield")
                     .font(.system(size: 44))
-                    .foregroundColor(Color(red: 0.17, green: 0.61, blue: 0.56))
+                    .foregroundColor(Theme.accent)
                 Text("已锁定").font(.headline)
                 if let authError {
                     Text(authError)

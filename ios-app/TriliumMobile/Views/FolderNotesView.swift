@@ -18,7 +18,7 @@ struct FolderNotesView: View {
     @State private var selected = Set<String>()
     @State private var showMove = false
 
-    private let accent = Color(red: 0.17, green: 0.61, blue: 0.56)
+    private let accent = Theme.accent
 
     var body: some View {
         List {
@@ -122,7 +122,7 @@ struct FolderNotesView: View {
             }
             .buttonStyle(.bordered)
         }
-        .font(.system(size: 14))
+        .font(.subheadline)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(.bar)

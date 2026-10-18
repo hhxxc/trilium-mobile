@@ -106,7 +106,7 @@ struct NoteListView: View {
 
             // 抽屉遮罩 + 目录树
             if drawerOpen {
-                Color.black.opacity(0.28)
+                Theme.scrim
                     .ignoresSafeArea()
                     .onTapGesture {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { drawerOpen = false }
@@ -274,7 +274,7 @@ struct NoteListView: View {
                             }
                         } header: {
                             Text(g.title)
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.footnote.weight(.semibold))
                                 .foregroundColor(.secondary)
                                 .textCase(nil)
                         }
@@ -313,12 +313,12 @@ struct NoteListView: View {
     private func chip(_ text: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(text)
-                .font(.system(size: 12, weight: active ? .semibold : .regular))
+                .font(.caption.weight(active ? .semibold : .regular))
                 .foregroundColor(active ? .white : Color(UIColor.secondaryLabel))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(Capsule().fill(active
-                    ? Color(red: 0.17, green: 0.61, blue: 0.56)
+                    ? Theme.accent
                     : Color(UIColor.secondarySystemFill)))
         }
         .buttonStyle(.plain)
@@ -339,7 +339,7 @@ struct NoteListView: View {
                         Button { searchQuery = term } label: {
                             Text(term)
                                 .font(.footnote)
-                                .foregroundColor(Color(red: 0.17, green: 0.61, blue: 0.56))
+                                .foregroundColor(Theme.accent)
                         }
                     }
                 }
@@ -463,15 +463,15 @@ struct NoteListView: View {
             HStack(spacing: 10) {
                 Image(systemName: updater.phase.isReady ? "checkmark.seal.fill" : "arrow.down.circle.fill")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(updater.phase.isReady ? .green : Color(red: 0.17, green: 0.61, blue: 0.56))
+                    .foregroundColor(updater.phase.isReady ? .green : Theme.accent)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(updateBannerTitle)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.footnote.weight(.medium))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                     if let p = updateBannerProgress {
                         ProgressView(value: p)
-                            .tint(Color(red: 0.17, green: 0.61, blue: 0.56))
+                            .tint(Theme.accent)
                     }
                 }
                 Spacer(minLength: 0)
@@ -545,7 +545,7 @@ struct NoteListView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .background(
-                Capsule().fill(active ? Color(red: 0.17, green: 0.61, blue: 0.56) : Color.clear)
+                Capsule().fill(active ? Theme.accent : Color.clear)
             )
             .contentShape(Capsule())
         }
@@ -561,7 +561,7 @@ struct NoteListView: View {
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(.white)
                 .frame(width: 44, height: 44)
-                .background(Circle().fill(Color(red: 0.17, green: 0.61, blue: 0.56)))
+                .background(Circle().fill(Theme.accent))
                 .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
         }
         .buttonStyle(.plain)
@@ -746,7 +746,7 @@ struct NoteRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(note.title.isEmpty ? "（无标题）" : note.title)
-                        .font(.system(size: 16, weight: .medium))
+                        .font(.callout.weight(.medium))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                     if note.isBookmarked {
@@ -758,7 +758,7 @@ struct NoteRow: View {
 
                 if !summary.isEmpty {
                     Text(summary)
-                        .font(.system(size: 13))
+                        .font(.footnote)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -768,7 +768,7 @@ struct NoteRow: View {
                         Image(systemName: "folder")
                             .font(.system(size: 9))
                         Text(location)
-                            .font(.system(size: 11))
+                            .font(.caption2)
                             .lineLimit(1)
                     }
                     .foregroundColor(Color(UIColor.tertiaryLabel))
@@ -776,7 +776,7 @@ struct NoteRow: View {
 
                 if !note.friendlyModified.isEmpty {
                     Text(note.friendlyModified)
-                        .font(.system(size: 11))
+                        .font(.caption2)
                         .foregroundColor(Color(UIColor.tertiaryLabel))
                 }
             }
@@ -866,7 +866,7 @@ struct NoteRow: View {
         case "book": return Color(red: 0.93, green: 0.63, blue: 0.14)      // 琥珀
         case "render": return Color(red: 0.53, green: 0.40, blue: 0.85)    // 紫
         case "mermaid": return Color(red: 0.33, green: 0.45, blue: 0.85)   // 靛
-        default: return Color(red: 0.17, green: 0.61, blue: 0.56)          // 主题青
+        default: return Theme.accent          // 主题青
         }
     }
 }
@@ -883,7 +883,7 @@ struct ComposeView: View {
     var onSaved: () async -> Void
 
     private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private let accent = Color(red: 0.17, green: 0.61, blue: 0.56)
+    private let accent = Theme.accent
 
     var body: some View {
         NavigationView {
@@ -891,9 +891,9 @@ struct ComposeView: View {
                 // 顶部信息条：存到哪 + 字数
                 HStack(spacing: 6) {
                     Image(systemName: "tray.full").font(.system(size: 11))
-                    Text("存入 收件箱").font(.system(size: 12))
+                    Text("存入 收件箱").font(.caption)
                     Spacer()
-                    Text("\(text.count) 字").font(.system(size: 11))
+                    Text("\(text.count) 字").font(.caption2)
                 }
                 .foregroundColor(Color(UIColor.tertiaryLabel))
                 .padding(.horizontal, 20)
@@ -904,7 +904,7 @@ struct ComposeView: View {
                 ZStack(alignment: .topLeading) {
                     if text.isEmpty {
                         Text("记点什么…\n第一行会作为标题")
-                            .font(.system(size: 17))
+                            .font(.body)
                             .lineSpacing(4)
                             .foregroundColor(Color(UIColor.placeholderText))
                             .padding(.top, 8)
@@ -912,7 +912,7 @@ struct ComposeView: View {
                             .allowsHitTesting(false)
                     }
                     TextEditor(text: $text)
-                        .font(.system(size: 17))
+                        .font(.body)
                         .lineSpacing(4)
                         .focused($inputFocused)
                         // 抵消 TextEditor 自带的 5pt 内边距，让文字和顶部提示条对齐
@@ -939,7 +939,7 @@ struct ComposeView: View {
                         save()
                     } label: {
                         Text(busy ? "保存中…" : "保存")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.subheadline.weight(.semibold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 36)
@@ -975,7 +975,7 @@ struct ComposeView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: icon).font(.system(size: 11, weight: .semibold))
-                Text(label).font(.system(size: 13, weight: active ? .semibold : .regular))
+                Text(label).font(.footnote.weight(active ? .semibold : .regular))
             }
             .foregroundColor(active ? accent : Color.secondary)
             .padding(.horizontal, 10)

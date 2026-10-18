@@ -14,6 +14,7 @@
 		13792c777d235251ba4f3b4d /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 251b4c83211d5fff9e613a5b /* Keychain.swift */; };
 		3d281f088c275463a620e616 /* NoteCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 939676e24c525f0ca69afc15 /* NoteCache.swift */; };
 		3217c04ab6f653a49faef6b9 /* NotePathResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = f5129d0370425b50929098b7 /* NotePathResolver.swift */; };
+		61d1f67da0935691b1ddb94f /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5dad00b6e6e25b11a098a1f4 /* Theme.swift */; };
 		c10582f7a3d15265bd52e0fa /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50008ff267ad5e9094a2dfff /* UpdateChecker.swift */; };
 		e706478840875ca393505001 /* Note.swift in Sources */ = {isa = PBXBuildFile; fileRef = 307a633e02d35e8bb8847ca5 /* Note.swift */; };
 		9178660f67835b6b8297699f /* TriliumMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9b61e7545c11570aae0dea94 /* TriliumMobileApp.swift */; };
@@ -65,6 +66,7 @@
 		251b4c83211d5fff9e613a5b /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/Keychain.swift; sourceTree = "<group>"; };
 		939676e24c525f0ca69afc15 /* NoteCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/NoteCache.swift; sourceTree = "<group>"; };
 		f5129d0370425b50929098b7 /* NotePathResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/NotePathResolver.swift; sourceTree = "<group>"; };
+		5dad00b6e6e25b11a098a1f4 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/Theme.swift; sourceTree = "<group>"; };
 		50008ff267ad5e9094a2dfff /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/UpdateChecker.swift; sourceTree = "<group>"; };
 		307a633e02d35e8bb8847ca5 /* Note.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Note.swift; sourceTree = "<group>"; };
 		9b61e7545c11570aae0dea94 /* TriliumMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriliumMobileApp.swift; sourceTree = "<group>"; };
@@ -106,6 +108,7 @@
 				251b4c83211d5fff9e613a5b /* Keychain.swift */,
 				939676e24c525f0ca69afc15 /* NoteCache.swift */,
 				f5129d0370425b50929098b7 /* NotePathResolver.swift */,
+				5dad00b6e6e25b11a098a1f4 /* Theme.swift */,
 				50008ff267ad5e9094a2dfff /* UpdateChecker.swift */,
 				307a633e02d35e8bb8847ca5 /* Note.swift */,
 				9b61e7545c11570aae0dea94 /* TriliumMobileApp.swift */,
@@ -250,6 +253,7 @@
 				13792c777d235251ba4f3b4d /* Keychain.swift in Sources */,
 				3d281f088c275463a620e616 /* NoteCache.swift in Sources */,
 				3217c04ab6f653a49faef6b9 /* NotePathResolver.swift in Sources */,
+				61d1f67da0935691b1ddb94f /* Theme.swift in Sources */,
 				c10582f7a3d15265bd52e0fa /* UpdateChecker.swift in Sources */,
 				e706478840875ca393505001 /* Note.swift in Sources */,
 				9178660f67835b6b8297699f /* TriliumMobileApp.swift in Sources */,

@@ -224,14 +224,14 @@ struct TreeNodeView: View {
             NoteIconBadge(type: note.type, size: 26)
 
             Text(note.title.isEmpty ? "（无标题）" : note.title)
-                .font(.system(size: 15.5))
+                .font(.subheadline)
                 .foregroundColor(.primary)
                 .lineLimit(1)
 
             // 收起状态下显示子项数量：一眼看出哪个目录里有东西，值不值得展开
             if hasChildren, !isExpanded {
                 Text("\(visibleChildCount)")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.caption2.weight(.medium))
                     .foregroundColor(Color(UIColor.secondaryLabel))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)

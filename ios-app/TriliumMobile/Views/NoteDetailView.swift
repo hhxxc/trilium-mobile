@@ -810,10 +810,37 @@ enum NoteHTML {
             let mobileCSS = """
             <style>
               body { font-family: -apple-system, "PingFang SC", sans-serif;
-                     font-size: \(fontSize)px; line-height: 1.75; padding: 16px 18px 60px;
+                     font-size: \(fontSize)px; line-height: 1.75; color: #1c1c1e;
+                     padding: 16px 18px 60px;
                      word-wrap: break-word; -webkit-text-size-adjust: 100%; }
-              img { max-width: 100%; height: auto; }
-              pre { overflow-x: auto; }
+              @media (prefers-color-scheme: dark) {
+                body { background: #000; color: #e5e5e7; }
+                a { color: #6bb3ff; }
+                img { background: #1c1c1e; }
+                blockquote { color: #98989d; }
+              }
+              h1 { font-size: 24px; line-height: 1.3; margin: 8px 0 16px; }
+              h2 { font-size: 20px; margin: 24px 0 10px; }
+              h3 { font-size: 18px; margin: 20px 0 8px; }
+              p { margin: 10px 0; }
+              img { max-width: 100%; height: auto; border-radius: 8px; }
+              pre {
+                background: rgba(120,120,128,0.12); border-radius: 8px;
+                padding: 12px; overflow-x: auto; font-size: 14px; line-height: 1.5;
+              }
+              code { font-family: ui-monospace, Menlo, monospace; font-size: 0.9em; }
+              p code, li code {
+                background: rgba(120,120,128,0.12); border-radius: 4px; padding: 1px 5px;
+              }
+              blockquote {
+                border-left: 3px solid rgba(120,120,128,0.4);
+                margin: 12px 0; padding: 2px 0 2px 14px; color: #6e6e73;
+              }
+              table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 15px; }
+              th, td { border: 1px solid rgba(120,120,128,0.35); padding: 7px 10px; text-align: left; }
+              ul, ol { padding-left: 24px; }
+              a { color: #0a66c2; }
+              hr { border: none; border-top: 1px solid rgba(120,120,128,0.3); margin: 20px 0; }
             </style>
             """
             if raw.lowercased().contains("</head>") {
@@ -839,6 +866,7 @@ enum NoteHTML {
             body { background: #000; color: #e5e5e7; }
             a { color: #6bb3ff; }
             img { background: #1c1c1e; }
+            blockquote { color: #98989d; }
           }
           h1 { font-size: 24px; line-height: 1.3; margin: 8px 0 16px; }
           h2 { font-size: 20px; margin: 24px 0 10px; }

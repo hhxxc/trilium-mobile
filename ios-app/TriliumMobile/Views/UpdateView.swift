@@ -17,7 +17,7 @@ struct UpdateView: View {
     @State private var stalled = false
     private let ticker = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
-    private let accent = Color(red: 0.17, green: 0.61, blue: 0.56)
+    private let accent = Theme.accent
 
     private var currentVersion: String { UpdateChecker.currentAppVersion }
 
@@ -87,10 +87,10 @@ struct UpdateView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundColor(.orange)
                 Text("下载卡住了（15 秒没有进展）")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.footnote.weight(.semibold))
             }
             Text("多半是当前下载源连不上。可以重新开始，系统会自动换到下一个源。")
-                .font(.system(size: 12))
+                .font(.caption)
                 .foregroundColor(.secondary)
             Button {
                 stalled = false
@@ -99,7 +99,7 @@ struct UpdateView: View {
                 updater.restartDownload()
             } label: {
                 Text("重新开始下载")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 40)
@@ -126,13 +126,13 @@ struct UpdateView: View {
                 )
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Trilium Mobile").font(.system(size: 16, weight: .semibold))
+                Text("Trilium Mobile").font(.callout.weight(.semibold))
                 Text("当前版本 v\(currentVersion)")
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundColor(.secondary)
                 if let latest = updater.latestVersion, latest != currentVersion {
                     Text("最新版本 v\(latest)")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.caption.weight(.medium))
                         .foregroundColor(accent)
                 }
             }
@@ -154,18 +154,18 @@ struct UpdateView: View {
             case .checking:
                 HStack(spacing: 10) {
                     ProgressView().scaleEffect(0.9)
-                    Text("正在检查更新…").font(.system(size: 14)).foregroundColor(.secondary)
+                    Text("正在检查更新…").font(.subheadline).foregroundColor(.secondary)
                 }
 
             case .downloading(let received, let total):
                 HStack(alignment: .firstTextBaseline) {
                     Text(percentText)
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .font(.system(.largeTitle, design: .rounded).bold())
                         .foregroundColor(accent)
                         .monospacedDigit()
                     Spacer()
                     Text(sizeText(received: received, total: total))
-                        .font(.system(size: 12))
+                        .font(.caption)
                         .foregroundColor(.secondary)
                         .monospacedDigit()
                 }
@@ -192,7 +192,7 @@ struct UpdateView: View {
                         Image(systemName: "square.and.arrow.up")
                         Text("安装 v\(version)")
                     }
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 44)
@@ -217,7 +217,7 @@ struct UpdateView: View {
                     updater.cancelDownload()
                 } label: {
                     Text("取消下载")
-                        .font(.system(size: 14))
+                        .font(.subheadline)
                         .foregroundColor(.red)
                         .frame(maxWidth: .infinity)
                         .frame(height: 42)
@@ -236,7 +236,7 @@ struct UpdateView: View {
                     }
                     Text("立即检查更新")
                 }
-                .font(.system(size: 14, weight: .medium))
+                .font(.subheadline.weight(.medium))
                 .foregroundColor(accent)
                 .frame(maxWidth: .infinity)
                 .frame(height: 42)
@@ -255,9 +255,9 @@ struct UpdateView: View {
                 .font(.system(size: 18))
                 .foregroundColor(color)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 14, weight: .semibold))
+                Text(title).font(.subheadline.weight(.semibold))
                 Text(detail)
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

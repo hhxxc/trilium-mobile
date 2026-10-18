@@ -11,7 +11,7 @@ struct MoveTargetPicker: View {
     @State private var loading = true
     @State private var errorMsg = ""
 
-    private let accent = Color(red: 0.17, green: 0.61, blue: 0.56)
+    private let accent = Theme.accent
 
     var body: some View {
         NavigationView {
@@ -48,7 +48,7 @@ struct MoveTargetPicker: View {
                     }
                 } header: {
                     Text("把「\(noteTitle)」放到：")
-                        .font(.system(size: 12))
+                        .font(.caption)
                         .textCase(nil)
                 }
             }
@@ -94,7 +94,7 @@ private struct MoveTargetRow: View {
     @State private var children: [Note]? = nil
 
     private var childIds: [String] { note.childNoteIds ?? [] }
-    private let accent = Color(red: 0.17, green: 0.61, blue: 0.56)
+    private let accent = Theme.accent
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -112,7 +112,7 @@ private struct MoveTargetRow: View {
                             .frame(width: 14)
                         NoteIconBadge(type: note.type, size: 24)
                         Text(note.title.isEmpty ? "（无标题）" : note.title)
-                            .font(.system(size: 15))
+                            .font(.subheadline)
                             .foregroundColor(.primary)
                             .lineLimit(1)
                         Spacer(minLength: 0)
@@ -125,7 +125,7 @@ private struct MoveTargetRow: View {
                     onPick(note.noteId, note.title.isEmpty ? "（无标题）" : note.title)
                 } label: {
                     Text("选这里")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                         .foregroundColor(accent)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5)

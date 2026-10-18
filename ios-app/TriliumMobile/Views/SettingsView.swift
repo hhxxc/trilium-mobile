@@ -159,7 +159,7 @@ struct SettingsView: View {
 
     private var updateSummaryColor: Color {
         switch updater.phase {
-        case .downloading, .ready: return Color(red: 0.17, green: 0.61, blue: 0.56)
+        case .downloading, .ready: return Theme.accent
         case .failed: return .orange
         default: return .secondary
         }
