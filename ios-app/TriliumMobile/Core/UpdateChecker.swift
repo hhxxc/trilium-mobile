@@ -269,6 +269,42 @@ final class UpdateCenter: NSObject, ObservableObject {
     private var lastPersist = Date.distantPast
     private var uiBackgroundTask: UIBackgroundTaskIdentifier = .invalid
 
+    // MARK: - 后台会话不可用时的降级链（2026-10-18 实测补）
+    //
+    // 现象（用户日志铁证）：点更新后 **同一秒** 就报「下载源失败（unknown error）」，
+    // 两个源都是。这不是网络问题，是任务根本没被创建——`NSURLErrorDomain -1`
+    // （"unknown error"）几乎只出现在两种情况：
+    //   - 后台会话的 nsurlsessiond 状态坏了（任务一创建就失败，重启设备能好）
+    //   - 后台会话被别的进程/上次进程占用（-996）、被系统断开（-997）
+    // 老办法（v1.2.x）用前台会话下载一直是好的，所以这里的策略是：
+    //   后台 → 重建后台会话再试一次 → 还不行就降到前台会话下
+    // 前台通道能正常下载（只是 App 被挂起会中断），至少不会彻底没法更新。
+
+    private enum Channel: String {
+        case background = "后台"
+        case backgroundRebuilt = "后台(重建)"
+        case foreground = "前台"
+    }
+
+    private var channel: Channel = .background
+    /// 一旦确认后台通道在本机不可用，本次下载后续源直接用前台，不再重复撞墙
+    private var preferForeground = false
+    private var currentURL: URL?
+    /// 懒创建的前台会话（只在后台通道确实不可用时才建）
+    private var fallbackSession: URLSession?
+
+    /// 这些错误码属于「会话级故障」：换源没用，得换通道
+    private static let sessionLevelCodes: Set<Int> = [
+        NSURLErrorUnknown,                                  // -1  unknown error
+        NSURLErrorBackgroundSessionInUseByAnotherProcess,    // -996
+        NSURLErrorBackgroundSessionWasDisconnected,          // -997
+    ]
+
+    /// 失败冷却：同一版本刚失败过就不再被「静默检查」反复重下
+    private var failedVersion: String?
+    private var failedAt: Date?
+    private let failureCooldown: TimeInterval = 10 * 60
+
     /// 落盘的状态（跨启动、跨页面）
     private struct Persisted: Codable {
         var version: String
@@ -281,6 +317,16 @@ final class UpdateCenter: NSObject, ObservableObject {
 
     private override init() {
         super.init()
+        session = makeBackgroundSession()
+
+        lastCheckedAt = UserDefaults.standard.object(forKey: lastCheckKey) as? Date
+        restore()
+        attachToLiveTasks()
+        AppLogger.shared.log("更新中心就绪，恢复状态：\(describe(phase))")
+    }
+
+    /// 后台会话配置（重建时复用，两处必须完全一致）
+    private func makeBackgroundSession() -> URLSession {
         let cfg = URLSessionConfiguration.background(withIdentifier: sessionIdentifier)
         // App 被系统回收后，下载完成仍然把 App 拉起来交付事件
         cfg.sessionSendsLaunchEvents = true
@@ -289,13 +335,18 @@ final class UpdateCenter: NSObject, ObservableObject {
         cfg.allowsCellularAccess = true
         cfg.timeoutIntervalForRequest = 30
         cfg.httpMaximumConnectionsPerHost = 1
+        return URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
+    }
 
-        session = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
-
-        lastCheckedAt = UserDefaults.standard.object(forKey: lastCheckKey) as? Date
-        restore()
-        attachToLiveTasks()
-        AppLogger.shared.log("更新中心就绪，恢复状态：\(describe(phase))")
+    /// 前台会话（降级通道）：App 活着就能下，被挂起会中断——好过完全下不了
+    private func foregroundSession() -> URLSession {
+        if let s = fallbackSession { return s }
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 30
+        cfg.timeoutIntervalForResource = 600
+        let s = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
+        fallbackSession = s
+        return s
     }
 
     // MARK: 状态落盘
@@ -374,7 +425,7 @@ final class UpdateCenter: NSObject, ObservableObject {
     // MARK: 对外动作
 
     /// 启动时静默检查：有新版就直接后台下载，全程不打扰用户
-    func silentCheck(minInterval: TimeInterval = 300) async {
+    func silentCheck(minInterval: TimeInterval = 300, ignoreCooldown: Bool = false) async {
         if checking { return }
         if let last = lastCheckedAt, Date().timeIntervalSince(last) < minInterval { return }
         // 正在下载就别插一脚
@@ -389,30 +440,39 @@ final class UpdateCenter: NSObject, ObservableObject {
         }
 
         let r = await UpdateChecker.checkAppUpdate()
-        checking = false
 
         // await 之后不保证还在主线程 → 回主线改 @Published
+        // ⚠️ 顺序要紧：先写 lastCheckedAt、再放开 checking。
+        //   反过来会在两者之间留一个窗口，同一个界面连点几次就会连着查 5 次（用户日志实测过）。
         await MainActor.run {
             self.lastCheckedAt = Date()
             UserDefaults.standard.set(self.lastCheckedAt, forKey: self.lastCheckKey)
-            self.apply(r)
+            self.apply(r, ignoreCooldown: ignoreCooldown)
+            self.checking = false
         }
     }
 
-    /// 落实检查结果（主线程）
-    private func apply(_ r: UpdateCheckResult) {
+    /// 落实检查结果（主线程）。`ignoreCooldown=true` 时（用户手动点检查）不看失败冷却。
+    private func apply(_ r: UpdateCheckResult, ignoreCooldown: Bool = false) {
         switch r {
         case .updateAvailable(_, let latest, _, let ipaURL):
             latestVersion = latest
             // 包里已经有了 → 直接待安装，不重复下
             if let existing = UpdateFileStore.existingDownload(version: latest) {
                 phase = .ready(version: latest, fileURL: existing)
+                failedVersion = nil
                 persist()
                 AppLogger.shared.log("本地已有 v\(latest) 安装包，待安装")
                 return
             }
             guard let url = ipaURL else { phase = .idle; persist(); return }
             if phase.isDownloading, currentTask != nil { return }
+            // 同一版本刚失败过：冷却期内不再自动重下（否则每次静默检查都重来一遍，日志刷屏）
+            if !ignoreCooldown, failedVersion == latest, let at = failedAt,
+               Date().timeIntervalSince(at) < failureCooldown {
+                AppLogger.shared.log("v\(latest) 上次下载失败，冷却中（剩余 \(Int(failureCooldown - Date().timeIntervalSince(at)))s），跳过自动重试")
+                return
+            }
             startDownload(version: latest, url: url)
 
         case .upToDate:
@@ -432,7 +492,7 @@ final class UpdateCenter: NSObject, ObservableObject {
     /// 用户点「检查更新」：忽略节流，立即查
     func checkNow() async {
         await MainActor.run { self.lastCheckedAt = nil }
-        await silentCheck(minInterval: 0)
+        await silentCheck(minInterval: 0, ignoreCooldown: true)
     }
 
     /// 开始后台下载（重复调用会替换旧任务）。候选源按顺序试，失败自动换下一个。
@@ -445,34 +505,79 @@ final class UpdateCenter: NSObject, ObservableObject {
         currentTask?.cancel()
         latestVersion = version
         candidateQueue = candidates
+        channel = .background          // 每个版本都从后台通道重新试起
+        preferForeground = false
         phase = .downloading(received: 0, total: 0)
         persist()
         beginNextCandidate()
     }
 
-    /// 试下一个候选源
+    /// 试下一个候选源（换源时通道也回到默认）
     private func beginNextCandidate() {
         guard let url = candidateQueue.first else {
-            setPhase(.failed("所有下载源都失败，请稍后重试"))
+            finishAllCandidatesFailed()
             return
         }
         candidateQueue.removeFirst()
+        channel = preferForeground ? .foreground : .background
+        attempt(url)
+    }
+
+    /// 用当前通道发起一次下载
+    private func attempt(_ url: URL) {
+        currentURL = url
         lastDownloadURL = url.absoluteString
-        AppLogger.shared.log("后台下载开始: v\(latestVersion ?? "?") ← \(url.host ?? "?")")
+        AppLogger.shared.log("\(channel.rawValue)下载开始: v\(latestVersion ?? "?") ← \(url.host ?? "?")")
 
         var req = URLRequest(url: url)
         req.setValue("TriliumMobile", forHTTPHeaderField: "User-Agent")
-        let task = session.downloadTask(with: req)
+        let s = (channel == .foreground) ? foregroundSession() : session
+        let task = s.downloadTask(with: req)
         versionByTask[task.taskIdentifier] = latestVersion ?? ""
         currentTask = task
         task.resume()
         beginUIBackgroundTask()
     }
 
+    /// 所有源都试完了：记失败 + 开冷却，别让静默检查每 30 秒再刷一遍
+    private func finishAllCandidatesFailed(_ reason: String = "所有下载源都失败，请稍后重试") {
+        failedVersion = latestVersion
+        failedAt = Date()
+        currentURL = nil
+        setPhase(.failed(reason))
+    }
+
+    /// 会话级故障就换通道：后台 → 重建后台 → 前台
+    private func escalateIfSessionLevelFailure(_ ns: NSError) -> Bool {
+        guard ns.domain == NSURLErrorDomain,
+              Self.sessionLevelCodes.contains(ns.code),
+              let url = currentURL else { return false }
+        switch channel {
+        case .background:
+            AppLogger.shared.log("后台会话异常（错误码 \(ns.code)），重建会话后重试同一源")
+            session.invalidateAndCancel()
+            session = makeBackgroundSession()
+            channel = .backgroundRebuilt
+            attempt(url)
+            return true
+        case .backgroundRebuilt:
+            AppLogger.shared.log("重建后仍失败（错误码 \(ns.code)），降到前台会话下载（切后台可能中断）")
+            preferForeground = true
+            channel = .foreground
+            attempt(url)
+            return true
+        case .foreground:
+            return false   // 前台也失败 → 交给上层换源
+        }
+    }
+
     func cancelDownload() {
         currentTask?.cancel()
         currentTask = nil
         candidateQueue.removeAll()
+        currentURL = nil
+        failedVersion = nil
+        failedAt = nil
         phase = .idle
         persist()
         AppLogger.shared.log("用户取消更新下载")
@@ -558,8 +663,14 @@ extension UpdateCenter: URLSessionDownloadDelegate {
             setPhase(.failed("下载内容不是有效的 IPA"))
             return
         }
-        AppLogger.shared.log("后台下载完成: v\(version) \(UpdateFileStore.size(of: dest)) 字节")
-        DispatchQueue.main.async { self.candidateQueue.removeAll() }
+        AppLogger.shared.log("下载完成（\(channel.rawValue)）: v\(version) \(UpdateFileStore.size(of: dest)) 字节")
+        DispatchQueue.main.async {
+            self.candidateQueue.removeAll()
+            self.currentURL = nil
+            self.failedVersion = nil
+            self.failedAt = nil
+            self.preferForeground = false
+        }
         setPhase(.ready(version: version, fileURL: dest))
         endUIBackgroundTask()
     }
@@ -572,18 +683,27 @@ extension UpdateCenter: URLSessionDownloadDelegate {
             // 任务失败但本地已有完整包 → 当作完成
             if let v = self.latestVersion, let existing = UpdateFileStore.existingDownload(version: v) {
                 self.phase = .ready(version: v, fileURL: existing)
+                self.failedVersion = nil
                 self.persist()
                 return
             }
+            // 会话级故障（-1 / -996 / -997）：换源没用，先换通道
+            if self.escalateIfSessionLevelFailure(ns) { return }
             // 还有候选源（例如清单域名证书挂了、改走 GitHub）→ 自动换下一个
             if !self.candidateQueue.isEmpty {
-                AppLogger.shared.log("下载源失败（\(error.localizedDescription)），切换下一个候选源")
+                AppLogger.shared.log("下载源失败（\(ns.domain) \(ns.code)：\(error.localizedDescription)），切换下一个候选源")
                 self.beginNextCandidate()
                 return
             }
-            AppLogger.shared.log("后台下载失败: \(error.localizedDescription)")
-            self.phase = .failed(error.localizedDescription)
-            self.persist()
+            AppLogger.shared.log("下载最终失败（\(ns.domain) \(ns.code)：\(error.localizedDescription)），\(Int(self.failureCooldown / 60)) 分钟内不再自动重试")
+            // 给用户能照着做的提示，别把「unknown error」原样丢到界面上
+            let userMsg: String
+            if ns.domain == NSURLErrorDomain && Self.sessionLevelCodes.contains(ns.code) {
+                userMsg = "系统下载服务异常（错误码 \(ns.code)），已自动换成前台方式重试仍失败。请重启手机后再试，或用内网地址手动安装"
+            } else {
+                userMsg = error.localizedDescription
+            }
+            self.finishAllCandidatesFailed(userMsg)
         }
     }
 

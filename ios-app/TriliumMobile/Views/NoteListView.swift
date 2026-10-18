@@ -549,6 +549,13 @@ struct NoteListView: View {
             errorMsg = ""
         } catch {
             guard gen == loadGeneration else { return }
+            // 切走/切 tab 导致的取消不是错误，别弹「加载失败」，也别污染日志
+            let ns = error as NSError
+            if error is CancellationError
+                || (ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled) {
+                loading = false
+                return
+            }
             AppLogger.shared.log("列表加载失败（\(browseMode.title)/\(q.isEmpty ? "无关键词" : q)）: \(error.localizedDescription)")
             if browseMode == .recent,
                let cached = NoteCache.shared.loadRecentNotes(), !cached.isEmpty {
