@@ -71,6 +71,10 @@ struct FolderNotesView: View {
             }
         }
         .task { await load() }
+        .onAppear {
+            // 从抽屉树里点进来时，抽屉不会自己消失（它挂在 NoteListView 的覆盖层上）
+            NotificationCenter.default.post(name: .noteDetailAppeared, object: nil)
+        }
     }
 
     // MARK: - 行
@@ -162,9 +166,13 @@ struct FolderNotesView: View {
     private func moveSelected(to parentId: String, title: String) async {
         var done = 0
         for n in notes where selected.contains(n.noteId) {
-            guard let from = n.parentNoteIds?.first, from != parentId else { continue }
+            // 移到原目录 = 没有变化，跳过
+            guard folder.noteId != parentId else { continue }
             do {
-                try await ETAPIClient.shared.moveNote(n.noteId, from: from, to: parentId)
+                // ⚠️ `from` 必须用**当前目录**，不能用 `n.parentNoteIds?.first`：
+                //   一条笔记可能同时挂在多个目录（克隆），first 未必是当前这个，
+                //   拿错就会把另一个目录里的分支删掉 —— 表现为「笔记在别处凭空消失」。
+                try await ETAPIClient.shared.moveNote(n.noteId, from: folder.noteId, to: parentId)
                 done += 1
             } catch {
                 AppLogger.shared.log("批量移动失败[\(n.title)]：\(error.localizedDescription)")
