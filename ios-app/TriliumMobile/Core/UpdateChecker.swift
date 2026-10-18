@@ -168,12 +168,20 @@ enum UpdateChecker {
         return candidates
     }
 
-    /// 内网镜像地址：从「备用地址」里取 NAS 主机名，端口沿用 ezbookkeeping 的 9180。
-    /// 取不到就是 nil（不猜，猜错只会多一次超时）。
+    /// 内网镜像地址：只用**内网 IP** 拼（端口沿用 ezbookkeeping 的 9180）。
+    /// ⚠️ 主备地址会自动互换，「备用地址」里可能是公网域名 —— 拿它拼 :9180 一定是错的，
+    ///   所以这里做一次私网校验，再退回 AppConfig 里的默认内网地址。
     static func lanMirrorURL(fileName: String) -> URL? {
-        let backup = AppSettings.shared.serverBackup
-        guard let host = URL(string: backup)?.host, !host.isEmpty, !fileName.isEmpty else { return nil }
-        return URL(string: "http://\(host):9180/api/nestkeep/\(fileName)")
+        guard !fileName.isEmpty else { return nil }
+        for raw in [AppSettings.shared.serverBackup, AppConfig.defaultBackupServer] {
+            guard let host = URL(string: raw)?.host, !host.isEmpty else { continue }
+            let isPrivate = host.hasPrefix("192.168.") || host.hasPrefix("10.")
+                || host.hasPrefix("172.") || host == "localhost"
+            if isPrivate {
+                return URL(string: "http://\(host):9180/api/nestkeep/\(fileName)")
+            }
+        }
+        return nil
     }
 
     // MARK: - 版本号工具
