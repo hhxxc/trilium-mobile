@@ -129,18 +129,18 @@ struct NoteListView: View {
                 }
             }
         }
-        // 顶部常驻更新条：下载中/待安装时一直挂在列表上方，点开是常驻下载页
-        // （抽屉打开时同样收起：safeAreaInset 的条带也渲染在 ZStack 之上）
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if !drawerOpen && (updater.phase.isDownloading || updater.phase.isReady) {
-                updateBanner
-            }
-        }
         // ⚠️ 抽屉打开时必须收起底部工具条：safeAreaInset 的条带渲染在 ZStack 内容**之上**，
         //   不收起的话抽屉会在底部被工具条压一条，胶囊/＋按钮还能隔着抽屉点到。
+        // ⚠️ 更新进度条**不能**放 top：大标题导航栏是浮在内容之上的，滚动到顶部时
+        //   「笔记」会直接压在 it 上面（用户截图实测穿模）。放到工具条上方，同一块安全区里。
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if !drawerOpen {
-                bottomBar
+                VStack(spacing: 0) {
+                    if updater.phase.isDownloading || updater.phase.isReady {
+                        updateBanner
+                    }
+                    bottomBar
+                }
             }
         }
         // 防抖实时搜索：停 400ms 才发请求；换模式也走同一个 task
@@ -408,7 +408,7 @@ struct NoteListView: View {
 
     // MARK: - 常驻更新条
 
-    /// 下载中 / 已就绪时一直挂在列表顶部（不随滚动消失），点开进入常驻下载页。
+    /// 下载中 / 已就绪时挂在底部工具条上方（不随滚动消失），点开进入常驻下载页。
     private var updateBanner: some View {
         Button {
             showUpdatePage = true
@@ -433,9 +433,10 @@ struct NoteListView: View {
                     .foregroundColor(.secondary)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.vertical, 9)
             .background(.bar)
-            .overlay(alignment: .bottom) {
+            // 分隔线在**上沿**：下面是工具条，两条 bar 无缝拼在一起
+            .overlay(alignment: .top) {
                 Rectangle().fill(Color(UIColor.separator).opacity(0.6)).frame(height: 0.5)
             }
             .contentShape(Rectangle())
