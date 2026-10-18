@@ -26,6 +26,20 @@ struct Note: Codable, Identifiable, Equatable {
         type == "book" || type == "noteMap" || type == "search" || type == "relationMap"
     }
 
+    /// Trilium 的**系统内部笔记**，用户不该在 App 里看到。
+    /// 两类：
+    ///   1. id 以 `_` 开头 —— 根下那个「隐藏的笔记」(`_hidden`)、`_share`、`_options`、
+    ///      搜索历史、SQL 控制台、AI 对话…全是引擎自己的数据，不是用户内容；
+    ///   2. 带 `#hideInNoteTree` 标签 —— Trilium 官方的「树里不显示」约定。
+    var isSystemNote: Bool {
+        if noteId.hasPrefix("_") { return true }
+        if let attrs = attributes,
+           attrs.contains(where: { $0.type == "label" && $0.name == "hideInNoteTree" }) {
+            return true
+        }
+        return false
+    }
+
     /// 展示用的修改时间（原样字符串，避免时区换算出错）
     var modifiedDisplay: String {
         guard let raw = dateModified, !raw.isEmpty else { return "" }

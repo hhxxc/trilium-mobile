@@ -90,13 +90,18 @@ struct ETAPIClient {
     /// 两种都不认时记日志 + 抛错（不再静默返回空数组）。
     private func decodeNotes(_ data: Data, context: String) throws -> [Note] {
         let decoder = JSONDecoder()
+        // ⚠️ 一律过滤系统内部笔记（_hidden/_share/搜索历史/SQL 控制台…）：
+        //   它们属于 Trilium 引擎，不属于用户；不过滤的话根目录会冒出「隐藏的笔记」，
+        //   点开全是用户没写过的内容（用户明确反馈「不需要，内容都不是我的」）。
         if let resp = try? decoder.decode(SearchResponse.self, from: data), let r = resp.results {
-            AppLogger.shared.log("\(context)：{results} 包裹格式，\(r.count) 条")
-            return r
+            let kept = r.filter { !$0.isSystemNote }
+            AppLogger.shared.log("\(context)：{results} 包裹格式，\(r.count) 条（过滤系统笔记 \(r.count - kept.count) 条）")
+            return kept
         }
         if let arr = try? decoder.decode([Note].self, from: data) {
-            AppLogger.shared.log("\(context)：裸数组格式，\(arr.count) 条")
-            return arr
+            let kept = arr.filter { !$0.isSystemNote }
+            AppLogger.shared.log("\(context)：裸数组格式，\(arr.count) 条（过滤系统笔记 \(arr.count - kept.count) 条）")
+            return kept
         }
         AppLogger.shared.log("❌ \(context)：解析失败 bytes=\(data.count) 形状=\(shape(of: data))")
         throw APIError.decodeFailed(context: context)
@@ -451,8 +456,9 @@ struct ETAPIClient {
     /// 然后并发（限流）getNote 每个子笔记补全详情。树层浅、每层节点少，开销可控。
     func childNotes(of parentId: String) async throws -> [Note] {
         let parent = try await getNote(parentId)
-        let ids = parent.childNoteIds ?? []
-        AppLogger.shared.log("childNotes[\(parentId)]: childNoteIds=\(ids.count)")
+        // 系统内部笔记（_hidden 等）不参与目录：用户看到「隐藏的笔记」会困惑
+        let ids = (parent.childNoteIds ?? []).filter { !$0.hasPrefix("_") }
+        AppLogger.shared.log("childNotes[\(parentId)]: childNoteIds=\(parent.childNoteIds?.count ?? 0)，可见 \(ids.count)")
         if ids.isEmpty {
             // 回退：childNoteIds 未填充时，用全量搜索 + notePath 推导层级
             return try await childrenViaNotePath(of: parentId)
@@ -489,7 +495,8 @@ struct ETAPIClient {
         if failed > 0 {
             AppLogger.shared.log("目录[\(parentId)]：\(failed)/\(out.count) 个子笔记详情加载失败（占位显示）")
         }
-        return out.sorted { $0.0 < $1.0 }.map { $0.1 }
+        // 再按属性兜一层：#hideInNoteTree 的笔记也不显示（官方约定的「树里隐藏」）
+        return out.sorted { $0.0 < $1.0 }.map { $0.1 }.filter { !$0.isSystemNote }
     }
 
     // MARK: - 树形层级的回退方案（notePath）
