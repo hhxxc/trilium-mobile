@@ -13,6 +13,8 @@ final class AppSettings: ObservableObject {
         static let inboxTitle = "trilium.inboxTitle"
         static let readerFontScale = "trilium.readerFontScale"
         static let lockEnabled = "trilium.lockEnabled"
+        /// 安装标记：UserDefaults 卸载即清，用来识别「重装」
+        static let installMarker = "trilium.installed"
     }
 
     /// 生物识别锁开关（FaceID/触控ID，失败回退设备密码；RootView 门禁）
@@ -69,6 +71,13 @@ final class AppSettings: ObservableObject {
     private init() {
         let d = UserDefaults.standard
         let savedServer = d.string(forKey: Keys.server) ?? AppConfig.defaultServer
+        // ⚠️ Keychain 里的数据**卸载重装不会清**，而 UserDefaults 会。
+        //   没有安装标记 = 全新安装/重装 → 先把 Keychain 里的历史 token 丢掉，
+        //   否则重装后会莫名其妙带着旧登录态（这个行为之前明确被否过）。
+        if !d.bool(forKey: Keys.installMarker) {
+            Keychain.set("")
+            d.set(true, forKey: Keys.installMarker)
+        }
         // token 优先 Keychain；老版本存在 UserDefaults 里的明文 → 迁移后清掉
         var savedToken = Keychain.get() ?? ""
         if savedToken.isEmpty, let legacy = d.string(forKey: Keys.token), !legacy.isEmpty {
