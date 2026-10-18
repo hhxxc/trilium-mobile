@@ -37,7 +37,7 @@ struct UpdateView: View {
                     stalledCard
                 }
                 actionArea
-                Text("下载使用系统后台传输：切到别的 App、锁屏、关掉这个页面都会继续；重开 App 会自动接上进度，不用从头再来。")
+                Text("下载包约 2 MB，几秒就能完成；源连不上会自动换（NAS → 内网 → GitHub）。若中途失败，回到本页会自动重试，不用手动操作。")
                     .font(.caption)
                     .foregroundColor(Color(UIColor.tertiaryLabel))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -176,7 +176,10 @@ struct UpdateView: View {
                     ProgressView().tint(accent)
                 }
                 statusLine(icon: "arrow.down.circle", color: accent,
-                           title: "后台下载中", detail: "可以离开这个页面，进度不会丢")
+                           title: "下载中",
+                           detail: updater.currentHost.isEmpty
+                               ? "正在连接下载源…"
+                               : "下载源：\(updater.currentHost)（卡住会自动换源）")
 
             case .ready(let version, let url):
                 statusLine(icon: "checkmark.seal.fill", color: .green,

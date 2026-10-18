@@ -152,11 +152,15 @@ enum UpdateChecker {
             candidates.append(url)
         }
 
+        // ⚠️ 候选源**不能只信清单给的 ipaURL**：
+        //   版本信息可能来自 GitHub API（NAS 清单挂了的时候），此时 ipaURL 就是 github.com ——
+        //   而手机直连 GitHub 是「挂死不报错」，表现就是永远「下载中 0 B」。
+        //   所以永远先试我们自己的两条已知直链（NAS 公网 + 内网镜像），再把清单给的地址、
+        //   GitHub 依次兜底。
+        let fileName = ipaURL.lastPathComponent.isEmpty ? "trilium-mobile.ipa" : ipaURL.lastPathComponent
+        push(URL(string: "https://ezbookx.x.ddnsto.com/api/nestkeep/\(fileName)"))
+        push(lanMirrorURL(fileName: fileName))
         push(ipaURL)
-        // 只对「穿透域名」加内网镜像；本来就是内网/其他源就没必要
-        if ipaURL.host?.lowercased().contains("ddnsto") == true {
-            push(lanMirrorURL(fileName: ipaURL.lastPathComponent))
-        }
         if let v = version, !v.isEmpty,
            let gh = URL(string: "https://github.com/\(repo)/releases/download/v\(v)/trilium-mobile.ipa") {
             push(gh)
@@ -264,6 +268,8 @@ enum UpdatePhase: Equatable {
 final class UpdateCenter: NSObject, ObservableObject {
     static let shared = UpdateCenter()
 
+    /// 当前正在试的下载源（显示在更新页上：卡住时一眼看出卡在哪个域名）
+    @Published private(set) var currentHost: String = ""
     @Published private(set) var phase: UpdatePhase = .idle
     @Published private(set) var latestVersion: String?
     @Published private(set) var lastCheckedAt: Date?
@@ -379,7 +385,7 @@ final class UpdateCenter: NSObject, ObservableObject {
             Task { await silentCheck(minInterval: 0, ignoreCooldown: true) }
             return
         }
-        // ② 有任务但两分钟没有任何字节 → 兜底换源（正常情况看门狗 40s 就该动手了）
+        // ② 有任务但两分钟没有任何字节 → 兜底换源（正常情况看门狗 8~20s 就该动手了）
         if phase.isDownloading, currentTask != nil,
            Date().timeIntervalSince(lastProgressAt) > 120 {
             AppLogger.shared.log("巡检：120 秒无字节，放弃当前下载源")
@@ -571,13 +577,20 @@ final class UpdateCenter: NSObject, ObservableObject {
     }
 
     func startDownload(version: String, candidates: [URL]) {
+        stallWork?.cancel()
         currentTask?.cancel()
         latestVersion = version
         candidateQueue = candidates
-        channel = .background          // 每个版本都从后台通道重新试起
-        preferForeground = false
+        // ⚠️ 默认走**前台**会话：本 App 是 TrollStore / ad-hoc 签名，
+        //   后台下载会话在这类签名下不可靠 —— 实测会出现「任务建了但永远 0 字节、
+        //   连错误回调都没有」。前台会话就是读笔记用的同一套机制，已验证可用。
+        //   包只有 2 MB 左右，几秒就完，配合 beginBackgroundTask 足以撑过短暂切后台。
+        preferForeground = true
+        channel = .foreground
+        sourceResumeCount = 0
         phase = .downloading(received: 0, total: 0)
         persist()
+        AppLogger.shared.log("开始下载 v\(version)，候选源 \(candidates.count) 个：\(candidates.map { $0.host ?? "?" }.joined(separator: " → "))")
         beginNextCandidate()
     }
 
@@ -596,6 +609,7 @@ final class UpdateCenter: NSObject, ObservableObject {
     /// 用当前通道发起一次下载
     private func attempt(_ url: URL) {
         currentURL = url
+        currentHost = url.host ?? ""
         lastDownloadURL = url.absoluteString
         lastProgressAt = Date()
         AppLogger.shared.log("\(channel.rawValue)下载开始: v\(latestVersion ?? "?") ← \(url.host ?? "?")")
@@ -621,12 +635,13 @@ final class UpdateCenter: NSObject, ObservableObject {
     // MARK: - 停滞看门狗
 
     /// 盯住「多久没进来一个字节」。内网源给 8 秒（本地不通就是不通），
-    /// 公网源给 40 秒（要留出慢速移动网络的时间）。到点没数据就换下一个候选。
+    /// 公网源给 20 秒（首字节一般 1-2 秒就到）。到点没数据就换下一个候选。
     private func armStallWatchdog(for url: URL) {
         stallWork?.cancel()
         let host = url.host ?? ""
         let isPrivate = host.hasPrefix("192.168.") || host.hasPrefix("10.") || host.hasPrefix("172.")
-        stallLimit = isPrivate ? 8 : 40
+        // 内网 8 秒（本地不通就是不通），公网 20 秒（首字节一般 1-2 秒就到，等太久纯浪费）
+        stallLimit = isPrivate ? 8 : 20
         scheduleStallCheck(url)
     }
 
@@ -674,6 +689,7 @@ final class UpdateCenter: NSObject, ObservableObject {
         failedVersion = latestVersion
         failedAt = Date()
         currentURL = nil
+        currentHost = ""
         setPhase(.failed(reason))
     }
 
@@ -707,6 +723,7 @@ final class UpdateCenter: NSObject, ObservableObject {
         currentTask = nil
         candidateQueue.removeAll()
         currentURL = nil
+        currentHost = ""
         sourceResumeCount = 0
         failedVersion = nil
         failedAt = nil
