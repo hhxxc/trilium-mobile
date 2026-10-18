@@ -187,10 +187,23 @@ struct TreeNodeView: View {
     private var nodeRow: some View {
         Group {
             if hasChildren {
-                Button(action: toggleExpand) {
-                    rowContent(showArrow: true)
+                HStack(spacing: 0) {
+                    Button(action: toggleExpand) {
+                        rowContent(showArrow: true)
+                    }
+                    .buttonStyle(TreeRowButtonStyle())
+                    // 进「目录内浏览」：一屏看完这个目录下的内容。
+                    // 整行点击仍然是展开/收起（不破坏原有手感），右侧这个小按钮才是进目录页。
+                    NavigationLink(destination: FolderNotesView(folder: note)) {
+                        Image(systemName: "list.bullet")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(Color(UIColor.secondaryLabel))
+                            .frame(width: 44, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("进入目录 \(note.title)")
                 }
-                .buttonStyle(TreeRowButtonStyle())
             } else {
                 NavigationLink(destination: NoteDetailView(note: note)) {
                     rowContent(showArrow: false)

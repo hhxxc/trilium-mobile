@@ -69,6 +69,10 @@ struct NoteListView: View {
     @ObservedObject private var updater = UpdateCenter.shared
     @State private var showUpdatePage = false
 
+    // 搜索范围 / 排序（只影响客户端：标题过滤、按修改时间重排）
+    @State private var searchTitleOnly = false
+    @State private var searchByModified = false
+
     private var isSearching: Bool {
         !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
     }
@@ -232,6 +236,9 @@ struct NoteListView: View {
             emptyState
         } else {
             List {
+                if isSearching {
+                    searchControlsRow
+                }
                 if pendingCount > 0 {
                     Button {
                         Task { await NoteCache.shared.flushPendingOps() }
@@ -278,9 +285,47 @@ struct NoteListView: View {
         }
     }
 
+    // MARK: - 搜索范围 / 排序
+
+    /// 搜索页顶部的一排胶囊：范围（全部 / 仅标题）+ 排序（相关度 / 最近修改）
+    private var searchControlsRow: some View {
+        HStack(spacing: 8) {
+            chip("全部", active: !searchTitleOnly) {
+                guard searchTitleOnly else { return }
+                searchTitleOnly = false
+                Task { await load() }
+            }
+            chip("仅标题", active: searchTitleOnly) {
+                guard !searchTitleOnly else { return }
+                searchTitleOnly = true
+                Task { await load() }
+            }
+            Spacer(minLength: 8)
+            chip(searchByModified ? "最近修改" : "相关度", active: searchByModified) {
+                searchByModified.toggle()
+                Task { await load() }
+            }
+        }
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 2, leading: 14, bottom: 6, trailing: 14))
+    }
+
+    private func chip(_ text: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(text)
+                .font(.system(size: 12, weight: active ? .semibold : .regular))
+                .foregroundColor(active ? .white : Color(UIColor.secondaryLabel))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(active
+                    ? Color(red: 0.17, green: 0.61, blue: 0.56)
+                    : Color(UIColor.secondarySystemFill)))
+        }
+        .buttonStyle(.plain)
+    }
+
     /// 空态：搜索无结果 → 给历史词；收藏为空 → 教怎么收藏
-    private var emptyState: some View {
-        VStack(spacing: 12) {
+    private var emptyState: some View {        VStack(spacing: 12) {
             Image(systemName: isSearching ? "magnifyingglass"
                               : (browseMode == .favorites ? "star" : "tray"))
                 .font(.system(size: 40)).foregroundColor(.secondary)
@@ -541,7 +586,16 @@ struct NoteListView: View {
                     NoteCache.shared.saveRecentNotes(result) // 缓存，离线可看
                 }
             } else {
-                result = try await ETAPIClient.shared.searchNotes(q)
+                // 拉多一点再做本地筛选：标题过滤 / 按修改时间重排都在客户端完成，
+                // 不需要服务端支持额外的搜索语法（也更不容易因为服务端版本差异翻车）
+                var hits = try await ETAPIClient.shared.searchNotes(q, limit: 100)
+                if searchTitleOnly {
+                    hits = hits.filter { $0.title.localizedCaseInsensitiveContains(q) }
+                }
+                if searchByModified {
+                    hits.sort { ($0.modifiedDate ?? .distantPast) > ($1.modifiedDate ?? .distantPast) }
+                }
+                result = hits
             }
             guard gen == loadGeneration else { return }
             notes = result

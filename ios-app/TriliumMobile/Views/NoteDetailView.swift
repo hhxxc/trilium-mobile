@@ -620,6 +620,20 @@ enum NoteHTML {
         .code-wrap .copy-btn { background: rgba(60,60,67,0.88); color: #ddd; }
       }
       img { -webkit-touch-callout: none; }
+      /* 回到顶部：长文翻到下面就懒得往回滑了，滚动过一屏才浮出来 */
+      #to-top-btn {
+        position: fixed; right: 14px; bottom: calc(24px + env(safe-area-inset-bottom));
+        width: 40px; height: 40px; border-radius: 20px;
+        border: 1px solid rgba(120,120,128,0.28);
+        background: rgba(255,255,255,0.94); color: #333;
+        font-size: 18px; line-height: 38px; text-align: center;
+        opacity: 0; pointer-events: none; z-index: 9999;
+        transition: opacity .2s ease; box-shadow: 0 2px 10px rgba(0,0,0,0.14);
+      }
+      #to-top-btn.show { opacity: 1; pointer-events: auto; }
+      @media (prefers-color-scheme: dark) {
+        #to-top-btn { background: rgba(58,58,60,0.94); color: #eee; }
+      }
     </style>
     <script>
     // 长按图片 600ms → 通知原生保存到相册（禁掉系统 callout，统一走自家流程）
@@ -680,6 +694,27 @@ enum NoteHTML {
         navigator.clipboard.writeText(text).then(done).catch(fallback);
       } else { fallback(); }
     });
+    <script>
+    // 回到顶部按钮：纯前端，不经过原生桥；页面没有滚动时自动隐藏
+    (function() {
+      function makeBtn() {
+        if (document.getElementById('to-top-btn')) return;
+        var b = document.createElement('div');
+        b.id = 'to-top-btn';
+        b.textContent = '↑';
+        b.addEventListener('click', function() {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+        document.body.appendChild(b);
+        window.addEventListener('scroll', function() {
+          if (window.scrollY > 600) b.classList.add('show');
+          else b.classList.remove('show');
+        }, { passive: true });
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', makeBtn);
+      } else { makeBtn(); }
+    })();
     </script>
     """
 
