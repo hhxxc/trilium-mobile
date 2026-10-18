@@ -10,6 +10,10 @@ enum APIError: LocalizedError {
     ///   界面上表现为「列表空白」，看不出到底是没笔记还是解析炸了（历史踩坑）。
     case decodeFailed(context: String)
     case server(message: String)
+    /// 下载不完整：收到的字节数和服务端声明的对不上。
+    /// ⚠️ 这类错误**绝不能**当成成功写进缓存 —— 半截 PDF 能打开但缺页，
+    ///   是最难排查的一种「看起来正常」。
+    case incomplete(received: Int, expected: Int)
 
     var errorDescription: String? {
         switch self {
@@ -18,6 +22,8 @@ enum APIError: LocalizedError {
         case .invalidResponse: return "响应格式异常"
         case .decodeFailed(let context): return "数据解析失败（\(context)）"
         case .server(let msg): return msg
+        case .incomplete(let received, let expected):
+            return "下载不完整（收到 \(received) / 应为 \(expected) 字节）"
         }
     }
 }
@@ -134,12 +140,51 @@ struct ETAPIClient {
                 AppLogger.shared.log("⚠️ \(method) \(path) → HTTP \(http.statusCode)：\(snippet(data))")
                 throw APIError.http(status: http.statusCode)
             }
+            // 完整性校验：声明了长度就必须收够。
+            // 只校验未压缩响应（gzip 时 Content-Length 是压缩后长度，比对会误报）
+            let encoding = (http.value(forHTTPHeaderField: "Content-Encoding") ?? "identity").lowercased()
+            if encoding == "identity", http.expectedContentLength > 0,
+               data.count != Int(http.expectedContentLength) {
+                AppLogger.shared.log("⚠️ \(method) \(path) 长度不符：收到 \(data.count) / 应为 \(http.expectedContentLength)")
+                throw APIError.incomplete(received: data.count, expected: Int(http.expectedContentLength))
+            }
         }
         return data
     }
 
+    /// 幂等 GET 的重试包装：隧道抖动 / 5xx / 超时自动重试，4xx（除 429）直接抛。
+    /// 下载和读笔记都走这里 —— 一次 502 就白屏对用户来说就是「坏了」。
+    private func rawRetrying(_ path: String, query: [URLQueryItem] = [],
+                             attempts: Int = 3) async throws -> Data {
+        var lastError: Error?
+        for i in 0..<max(1, attempts) {
+            if i > 0 {
+                // 300ms / 600ms 退避，给隧道一点恢复时间
+                try? await Task.sleep(nanoseconds: UInt64(300_000_000) * UInt64(i))
+            }
+            do {
+                return try await raw(path, query: query)
+            } catch let e as APIError {
+                if case .http(let status) = e, (400..<500).contains(status), status != 429 {
+                    throw e            // 参数错/无权限，重试没意义
+                }
+                if case .incomplete = e {
+                    lastError = e      // 截断可以重试
+                    continue
+                }
+                lastError = e
+            } catch let e as URLError {
+                if e.code == .cancelled { throw e }
+                lastError = e
+            } catch {
+                lastError = e
+            }
+        }
+        throw lastError ?? APIError.invalidResponse
+    }
+
     private func getJSON<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
-        let data = try await raw(path, query: query)
+        let data = try await rawRetrying(path, query: query)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
@@ -172,7 +217,7 @@ struct ETAPIClient {
     }
 
     func getContent(_ id: String) async throws -> String {
-        let data = try await raw("/etapi/notes/\(id)/content")
+        let data = try await rawRetrying("/etapi/notes/\(id)/content")
         guard let text = String(data: data, encoding: .utf8) else {
             // ⚠️ 不能静默返回 ""：编辑页会把它当正文加载，一保存就把服务端内容清空
             AppLogger.shared.log("❌ 正文解码失败[\(id)]：\(data.count) 字节非 UTF-8")
@@ -183,11 +228,35 @@ struct ETAPIClient {
 
     /// 二进制内容（image/file 笔记的 content 是二进制）
     func getContentData(_ id: String) async throws -> Data {
-        try await raw("/etapi/notes/\(id)/content")
+        try await rawRetrying("/etapi/notes/\(id)/content")
     }
 
-    /// 二进制内容 + 下载进度回调（附件预览用；逐块读取，每 64KB 上报一次）
+    /// 二进制内容 + 下载进度回调（附件预览用；逐块读取，每 64KB 上报一次）。
+    /// 带重试和长度校验：附件动辄几十 MB，一次隧道抖动就要重来很伤，
+    /// 但**宁可重试也不要把半截文件返回**给上层去缓存。
     func getContentData(_ id: String, onProgress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> Data {
+        var lastError: Error?
+        for attempt in 0..<3 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(400_000_000) * UInt64(attempt))
+            }
+            do {
+                return try await streamContent(id, onProgress: onProgress)
+            } catch let e as URLError where e.code == .cancelled {
+                throw e
+            } catch let e as APIError {
+                if case .http(let status) = e, (400..<500).contains(status), status != 429 { throw e }
+                lastError = e
+            } catch {
+                lastError = error
+            }
+            AppLogger.shared.log("附件下载第 \(attempt + 1) 次失败，准备重试[\(id)]")
+        }
+        throw lastError ?? APIError.invalidResponse
+    }
+
+    private func streamContent(_ id: String,
+                               onProgress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> Data {
         guard var comp = URLComponents(url: baseURL.appendingPathComponent("/etapi/notes/\(id)/content"),
                                        resolvingAgainstBaseURL: false) else {
             throw APIError.invalidURL
@@ -199,6 +268,10 @@ struct ETAPIClient {
         req.setValue(token, forHTTPHeaderField: "Authorization")
 
         let (bytes, resp) = try await session.bytes(for: req)
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            AppLogger.shared.log("⚠️ 附件下载 HTTP \(http.statusCode)[\(id)]")
+            throw APIError.http(status: http.statusCode)
+        }
         let total = (resp as? HTTPURLResponse).flatMap {
             $0.expectedContentLength > 0 ? $0.expectedContentLength : nil
         }
@@ -214,13 +287,18 @@ struct ETAPIClient {
                 sinceReport = 0
             }
         }
+        // 收够了才算完整：连接被中断时某些情况不报错，只是提前结束
+        if let t = total, data.count != Int(t) {
+            AppLogger.shared.log("⚠️ 附件长度不符[\(id)]：收到 \(data.count) / 应为 \(t)")
+            throw APIError.incomplete(received: data.count, expected: Int(t))
+        }
         onProgress(Int64(data.count), total)
         return data
     }
 
     /// 附件下载（笔记的 attachment，如 file 笔记的附件内容）
     func getAttachmentContent(_ attachmentId: String) async throws -> Data {
-        try await raw("/etapi/attachments/\(attachmentId)/content")
+        try await rawRetrying("/etapi/attachments/\(attachmentId)/content")
     }
 
     func putContent(_ id: String, content: String) async throws {
@@ -345,7 +423,7 @@ struct ETAPIClient {
     func searchNotes(_ query: String, limit: Int = 30) async throws -> [Note] {
         var q = [URLQueryItem(name: "search", value: query)]
         q.append(URLQueryItem(name: "limit", value: String(limit)))
-        let data = try await raw("/etapi/notes", query: q)
+        let data = try await rawRetrying("/etapi/notes", query: q)
         return try decodeNotes(data, context: "搜索「\(query)」")
     }
 
@@ -361,7 +439,7 @@ struct ETAPIClient {
         q.append(URLQueryItem(name: "orderBy", value: "dateModified"))
         q.append(URLQueryItem(name: "orderDirection", value: "desc"))
         q.append(URLQueryItem(name: "limit", value: String(limit)))
-        let data = try await raw("/etapi/notes", query: q)
+        let data = try await rawRetrying("/etapi/notes", query: q)
         return try decodeNotes(data, context: "最近列表(\(limit))")
     }
 
