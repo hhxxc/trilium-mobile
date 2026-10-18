@@ -531,7 +531,14 @@ final class UpdateCenter: NSObject, ObservableObject {
 
         var req = URLRequest(url: url)
         req.setValue("TriliumMobile", forHTTPHeaderField: "User-Agent")
-        let s = (channel == .foreground) ? foregroundSession() : session
+        // 注意：session 是隐式解包可选（URLSession!），三元表达式会把结果推成 URLSession?，
+        // 必须显式声明类型，否则 downloadTask 调不到（CI 编译报错过一次）
+        let s: URLSession
+        if channel == .foreground {
+            s = foregroundSession()
+        } else {
+            s = session
+        }
         let task = s.downloadTask(with: req)
         versionByTask[task.taskIdentifier] = latestVersion ?? ""
         currentTask = task
