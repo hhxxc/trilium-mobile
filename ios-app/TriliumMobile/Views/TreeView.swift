@@ -145,7 +145,12 @@ struct TreeNodeView: View {
 
     /// 是否有子笔记（getNote 补全的 childNoteIds 为准）
     private var hasChildren: Bool {
-        !(note.childNoteIds ?? []).isEmpty
+        visibleChildCount > 0
+    }
+
+    /// 可见子项数：排除系统笔记（_hidden 那些不显示，数量也不该算进去）
+    private var visibleChildCount: Int {
+        (note.childNoteIds ?? []).filter { !$0.hasPrefix("_") }.count
     }
 
     var body: some View {
@@ -209,6 +214,16 @@ struct TreeNodeView: View {
                 .font(.system(size: 15.5))
                 .foregroundColor(.primary)
                 .lineLimit(1)
+
+            // 收起状态下显示子项数量：一眼看出哪个目录里有东西，值不值得展开
+            if hasChildren, !isExpanded {
+                Text("\(visibleChildCount)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Color(UIColor.secondaryLabel))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color(UIColor.tertiarySystemFill)))
+            }
 
             Spacer(minLength: 0)
         }

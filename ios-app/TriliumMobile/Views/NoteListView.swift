@@ -253,8 +253,10 @@ struct NoteListView: View {
                 }
                 if isSearching || browseMode == .favorites {
                     // 搜索结果 / 收藏：平铺（分组反而碍事）
+                    // 这两种场景笔记来自不同目录，行里补一行「所在目录」——
+                    // 同名笔记（一条 text 一条 file）靠它才能分清
                     ForEach(notes) { note in
-                        listRow(note)
+                        listRow(note, showsLocation: true)
                     }
                 } else {
                     // 浏览模式按时间分组
@@ -308,9 +310,9 @@ struct NoteListView: View {
     }
 
     /// 列表行：进详情 + 左滑收藏/移动 + 右滑删除 + 长按整理菜单
-    private func listRow(_ note: Note) -> some View {
+    private func listRow(_ note: Note, showsLocation: Bool = false) -> some View {
         NavigationLink(destination: NoteDetailView(note: note)) {
-            NoteRow(note: note)
+            NoteRow(note: note, showsLocation: showsLocation)
         }
         // 系统分隔线贴着行左边缘、和标题文字不对齐 → 隐藏，改由 NoteRow 自己画
         .listRowSeparator(.hidden)
@@ -670,7 +672,17 @@ struct NoteIconBadge: View {
 /// 笔记列表行：图标徽标 + 标题 + 正文摘要 + 修改时间 + 收藏星标
 struct NoteRow: View {
     let note: Note
+    /// 搜索/收藏里传 true：多显示一行「所在目录」，用来区分同名笔记
+    var showsLocation: Bool = false
+
     @State private var summary: String = ""
+    @State private var location: String = ""
+
+    init(note: Note, showsLocation: Bool = false) {
+        self.note = note
+        self.showsLocation = showsLocation
+        _location = State(initialValue: NotePathResolver.cachedParentTitle(for: note) ?? "")
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -697,6 +709,17 @@ struct NoteRow: View {
                         .lineLimit(1)
                 }
 
+                if showsLocation, !location.isEmpty {
+                    HStack(spacing: 3) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 9))
+                        Text(location)
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                    }
+                    .foregroundColor(Color(UIColor.tertiaryLabel))
+                }
+
                 if !note.friendlyModified.isEmpty {
                     Text(note.friendlyModified)
                         .font(.system(size: 11))
@@ -713,7 +736,14 @@ struct NoteRow: View {
                 .frame(height: 0.5)
                 .padding(.leading, 42)
         }
-        .onAppear { Task { await loadSummaryIfNeeded() } }
+        .onAppear {
+            Task {
+                await loadSummaryIfNeeded()
+                if showsLocation, location.isEmpty {
+                    location = await NotePathResolver.parentTitle(for: note) ?? ""
+                }
+            }
+        }
     }
 
     private func loadSummaryIfNeeded() async {
