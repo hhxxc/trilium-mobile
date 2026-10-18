@@ -365,9 +365,34 @@ final class UpdateCenter: NSObject, ObservableObject {
 
         lastCheckedAt = UserDefaults.standard.object(forKey: lastCheckKey) as? Date
         restore()
+        discardStalePackages()
         attachToLiveTasks()
         startGuardTimer()
         AppLogger.shared.log("更新中心就绪，恢复状态：\(describe(phase))")
+    }
+
+    /// 清掉「装了也没用」的安装包：版本 <= 当前运行的版本。
+    /// ⚠️ 触发场景：用户在 App 内下载 v1.5.4 → 装完变成 v1.5.4 →
+    ///   本地那条「待安装 v1.5.4」不会自动失效 → 界面提示「安装 v1.5.4」，
+    ///   而当前版本就是 v1.5.4（用户实测截图反馈）。
+    private func discardStalePackages() {
+        let current = UpdateChecker.currentAppVersion
+        let dir = UpdateFileStore.destinationURL(version: current).deletingLastPathComponent()
+        if let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+            for f in files where f.pathExtension.lowercased() == "ipa" {
+                let base = f.deletingPathExtension().lastPathComponent
+                let ver = base.hasPrefix("Trilium-") ? String(base.dropFirst("Trilium-".count)) : base
+                if UpdateChecker.compareVersion(ver, current) <= 0 {
+                    try? FileManager.default.removeItem(at: f)
+                    AppLogger.shared.log("清理过期安装包：\(f.lastPathComponent)")
+                }
+            }
+        }
+        if case .ready(let v, _) = phase, UpdateChecker.compareVersion(v, current) <= 0 {
+            phase = .idle
+            latestVersion = nil
+            persist()
+        }
     }
 
     // MARK: - 巡检（与 UI 无关的兜底，防止状态机卡死）
@@ -429,6 +454,13 @@ final class UpdateCenter: NSObject, ObservableObject {
         lastDownloadURL = p.urlString
 
         if p.isReady, let path = p.filePath, FileManager.default.fileExists(atPath: path) {
+            // 关键校验：这个包如果就是当前运行的版本（或更旧），装上没有意义 ——
+            // 否则会出现「当前版本 v1.5.4，却提示安装 v1.5.4」的荒谬状态（实测反馈）
+            guard UpdateChecker.compareVersion(p.version, UpdateChecker.currentAppVersion) > 0 else {
+                try? FileManager.default.removeItem(atPath: path)
+                AppLogger.shared.log("丢弃已安装版本的安装包：v\(p.version)")
+                return
+            }
             phase = .ready(version: p.version, fileURL: URL(fileURLWithPath: path))
             return
         }
@@ -554,7 +586,9 @@ final class UpdateCenter: NSObject, ObservableObject {
             startDownload(version: latest, url: url)
 
         case .upToDate:
-            if phase.isReady { return }   // 已下好的包留着，用户可能还没装
+            // 已是最新：如果本地那个「待安装」的包其实是当前版本（或更旧），直接清掉
+            discardStalePackages()
+            if phase.isReady { return }   // 真有更高版本的已下好，留着让用户装
             phase = .idle
             latestVersion = nil
             persist()
