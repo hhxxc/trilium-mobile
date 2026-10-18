@@ -38,6 +38,7 @@ struct FolderNotesView: View {
             }
         }
         .listStyle(.plain)
+        .hideScrollIndicators()
         .navigationTitle(folder.title.isEmpty ? "目录" : folder.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

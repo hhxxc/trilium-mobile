@@ -94,17 +94,29 @@ struct ETAPIClient {
         //   它们属于 Trilium 引擎，不属于用户；不过滤的话根目录会冒出「隐藏的笔记」，
         //   点开全是用户没写过的内容（用户明确反馈「不需要，内容都不是我的」）。
         if let resp = try? decoder.decode(SearchResponse.self, from: data), let r = resp.results {
-            let kept = r.filter { !$0.isSystemNote }
-            AppLogger.shared.log("\(context)：{results} 包裹格式，\(r.count) 条（过滤系统笔记 \(r.count - kept.count) 条）")
+            let kept = Self.dedupAndFilter(r)
+            AppLogger.shared.log("\(context)：{results} 包裹格式，\(r.count) 条（过滤/去重后 \(kept.count) 条）")
             return kept
         }
         if let arr = try? decoder.decode([Note].self, from: data) {
-            let kept = arr.filter { !$0.isSystemNote }
-            AppLogger.shared.log("\(context)：裸数组格式，\(arr.count) 条（过滤系统笔记 \(arr.count - kept.count) 条）")
+            let kept = Self.dedupAndFilter(arr)
+            AppLogger.shared.log("\(context)：裸数组格式，\(arr.count) 条（过滤/去重后 \(kept.count) 条）")
             return kept
         }
         AppLogger.shared.log("❌ \(context)：解析失败 bytes=\(data.count) 形状=\(shape(of: data))")
         throw APIError.decodeFailed(context: context)
+    }
+
+    /// 过滤系统笔记 + 按 noteId 去重。
+    /// 去重是防御性的：一旦服务端返回两条同 noteId 的记录，列表 `ForEach(notes)`
+    /// 会因「重复 ID」直接闪退（SwiftUI 的 Duplicate ID 崩溃），先在这里挡掉。
+    private static func dedupAndFilter(_ notes: [Note]) -> [Note] {
+        var seen = Set<String>()
+        return notes.filter { note in
+            guard !note.isSystemNote, !seen.contains(note.noteId) else { return false }
+            seen.insert(note.noteId)
+            return true
+        }
     }
 
     // MARK: - 底层请求

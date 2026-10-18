@@ -55,6 +55,7 @@ struct TreeView: View {
                 }
                 .padding(.vertical, 8)
             }
+            .hideScrollIndicators()
         }
     }
 

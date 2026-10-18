@@ -18,3 +18,34 @@ enum Theme {
             : UIColor.black.withAlphaComponent(0.28)
     })
 }
+
+/// 隐藏宿主滚动视图的滚动指示条。
+/// iOS 15 没有 `.scrollIndicators(.hidden)`（iOS 16+ 才有），
+/// 用这个「背景探针」向上找 UIScrollView 再关掉竖向指示条。
+/// 放在 `.background()` 里，不占布局、不挡点击。
+struct ScrollIndicatorHider: UIViewRepresentable {
+    final class Probe: UIView {
+        override func didMoveToSuperview() { super.didMoveToSuperview(); hide() }
+        override func didMoveToWindow() { super.didMoveToWindow(); hide() }
+        func hide() {
+            var v: UIView? = superview
+            while let cur = v {
+                if let sv = cur as? UIScrollView {
+                    sv.showsVerticalScrollIndicator = false
+                    sv.showsHorizontalScrollIndicator = false
+                    return
+                }
+                v = cur.superview
+            }
+        }
+    }
+
+    func makeUIView(context: Context) -> Probe { Probe() }
+    func updateUIView(_ uiView: Probe, context: Context) { uiView.hide() }
+}
+
+extension View {
+    func hideScrollIndicators() -> some View {
+        background(ScrollIndicatorHider())
+    }
+}
