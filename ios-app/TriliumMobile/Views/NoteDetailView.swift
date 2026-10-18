@@ -207,6 +207,10 @@ struct NoteDetailView: View {
         .task {
             await load()
             await loadSiblings()
+            // file 类型的笔记（PDF/Office/压缩包…）直接打开，不要再让用户多按一次「预览附件」
+            if note.type == "file" {
+                await previewFile()
+            }
         }
         // 阅读页出现即广播：首页收到后收起抽屉。
         // 抽屉是 ZStack 覆盖层（不在导航栈里），从树里 push 阅读页时它不会自己消失。
