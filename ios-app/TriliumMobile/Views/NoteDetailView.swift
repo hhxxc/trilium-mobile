@@ -119,6 +119,7 @@ struct NoteDetailView: View {
                         Button { showOutline = true } label: {
                             Image(systemName: "list.bullet.indent")
                         }
+                        .accessibilityLabel("大纲目录")
                     }
                     // 阅读字号：四档缩放，持久化，改动即生效（html diff 自动重载）
                     Menu {
@@ -136,12 +137,14 @@ struct NoteDetailView: View {
                     } label: {
                         Text("Aa").font(.callout.weight(.medium))
                     }
+                    .accessibilityLabel("阅读字号")
 
                     Button {
                         shareNote()
                     } label: {
                         Image(systemName: "square.and.arrow.up")
                     }
+                    .accessibilityLabel("分享笔记")
                 }
                 if note.type == "text" || note.type == "code" {
                     Button("编辑") { showEditChoice = true }

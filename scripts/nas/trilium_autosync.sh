@@ -83,6 +83,68 @@ trap 'rm -f "$LOCK"' EXIT INT TERM
 
 mkdir -p "$DATA_DIR" "$STATE_DIR"
 
+# ---- 每日健康自检（证书到期 / 接口不可达 / IPA 分发异常 → Apprise 告警）----
+# 背景：2026-10-17 ddnsto 通配证书到期，公网 API 和 IPA 分发同时挂掉，全靠人肉发现。
+# 频率：本脚本每 5 分钟被 DSM 唤起，这里用日期戳把真正的检查压成「每天一次」。
+HEALTH_STAMP="$STATE_DIR/.tl_health_date"
+HEALTH_HOST="${TL_HEALTH_HOST:-dsm920-ddsnto-trilium-notes.x.ddnsto.com}"
+HEALTH_ASSET_HOST="${TL_HEALTH_ASSET_HOST:-ezbookx.x.ddnsto.com}"
+HEALTH_LAN_IPA="${TL_HEALTH_LAN_IPA:-http://192.168.31.198:9180/api/nestkeep/trilium-mobile.ipa}"
+
+cert_state() { # $1=host → ok | warn | expired | unknown
+    cert=$(echo | timeout 15 openssl s_client -connect "$1:443" -servername "$1" 2>/dev/null \
+           | sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p')
+    if [ -z "$cert" ]; then
+        echo unknown
+        return 0
+    fi
+    if printf '%s\n' "$cert" | openssl x509 -noout -checkend 0 >/dev/null 2>&1; then
+        if printf '%s\n' "$cert" | openssl x509 -noout -checkend 604800 >/dev/null 2>&1; then
+            echo ok
+        else
+            echo warn
+        fi
+    else
+        echo expired
+    fi
+}
+
+health_check() {
+    today=$(date +%Y-%m-%d)
+    if [ -f "$HEALTH_STAMP" ] && [ "$(cat "$HEALTH_STAMP" 2>/dev/null)" = "$today" ]; then
+        return 0
+    fi
+    echo "$today" > "$HEALTH_STAMP"
+    problems=""
+
+    for h in "$HEALTH_HOST" "$HEALTH_ASSET_HOST"; do
+        case "$(cert_state "$h")" in
+            expired) problems="$problems 证书已过期:$h;" ;;
+            warn)    problems="$problems 证书7天内到期:$h;" ;;
+            unknown) problems="$problems 证书探测失败:$h;" ;;
+        esac
+    done
+
+    code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "https://$HEALTH_HOST/etapi/app-info" 2>/dev/null)
+    case "$code" in
+        200|401|403) ;;
+        *) problems="$problems 公网接口异常(HTTP $code);" ;;
+    esac
+
+    code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' "$HEALTH_LAN_IPA" 2>/dev/null)
+    [ "$code" = "200" ] || problems="$problems 内网IPA异常(HTTP $code);"
+
+    if [ -n "$problems" ]; then
+        log "HEALTH:$problems"
+        notify "trilium-mobile 健康告警" "$problems（每日自检，详见 trilium_autosync.log）" warning
+    else
+        log "HEALTH: 证书与接口全部正常"
+    fi
+}
+
+health_check
+
+
 # 1. 取最新 tag：HEAD 不跟随重定向，从 Location 头解析
 LOC=$(curl -sI -m 30 -H "User-Agent: trilium-autosync" "$ASSET_URL" 2>/dev/null \
       | grep -i '^location:' | tr -d '\r' | sed 's/^[Ll]ocation: *//')

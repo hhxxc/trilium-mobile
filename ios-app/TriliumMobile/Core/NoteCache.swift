@@ -46,10 +46,26 @@ final class NoteCache {
 
     func saveContent(_ noteId: String, text: String) {
         try? text.write(to: contentURL(noteId), atomically: true, encoding: .utf8)
+        // 内容变了，列表摘要缓存要失效（否则编辑器改完回列表还是旧摘要）
+        summaryCache.removeObject(forKey: noteId as NSString)
     }
 
     func loadContent(_ noteId: String) -> String? {
         try? String(contentsOf: contentURL(noteId), encoding: .utf8)
+    }
+
+    // MARK: - 列表摘要缓存（内存）
+
+    /// 列表每行的正文摘要。以前每行 onAppear 都同步读一次磁盘，
+    /// 几百条笔记滚动时就是几百次主线程 IO —— 换成 NSCache 后滚动只算一次。
+    private let summaryCache = NSCache<NSString, NSString>()
+
+    func cachedSummary(_ noteId: String) -> String? {
+        summaryCache.object(forKey: noteId as NSString) as String?
+    }
+
+    func storeSummary(_ noteId: String, _ text: String) {
+        summaryCache.setObject(text as NSString, forKey: noteId as NSString)
     }
 
     // MARK: - 二进制（图片/附件）
@@ -72,6 +88,7 @@ final class NoteCache {
     func remove(_ noteId: String) {
         try? fm.removeItem(at: contentURL(noteId))
         try? fm.removeItem(at: blobURL(noteId))
+        summaryCache.removeObject(forKey: noteId as NSString)
     }
 
     /// 缓存目录总字节数（设置页展示用）
@@ -91,6 +108,7 @@ final class NoteCache {
         try? fm.removeItem(at: root)
         try? fm.createDirectory(at: contentDir, withIntermediateDirectories: true)
         try? fm.createDirectory(at: blobDir, withIntermediateDirectories: true)
+        summaryCache.removeAllObjects()
         // 缓存清了，待同步操作必须保留（是真实数据不是缓存）
         if !pendingOps.isEmpty {
             UserDefaults.standard.set(try? JSONEncoder().encode(pendingOps), forKey: "trilium.pendingOps")

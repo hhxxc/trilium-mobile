@@ -121,6 +121,7 @@ struct NoteListView: View {
                     } label: {
                         Image(systemName: "list.bullet.indent")
                     }
+                    .accessibilityLabel("打开目录")
                 }
             }
         }
@@ -379,6 +380,7 @@ struct NoteListView: View {
                         .font(.system(size: 20))
                         .foregroundColor(Color(UIColor.tertiaryLabel))
                 }
+                .accessibilityLabel("关闭目录")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -503,6 +505,7 @@ struct NoteListView: View {
                 .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("新建笔记")
     }
 
     // MARK: - 数据
@@ -689,10 +692,10 @@ struct NoteRow: View {
                 .frame(height: 0.5)
                 .padding(.leading, 42)
         }
-        .onAppear { loadSummaryIfNeeded() }
+        .onAppear { Task { await loadSummaryIfNeeded() } }
     }
 
-    private func loadSummaryIfNeeded() {
+    private func loadSummaryIfNeeded() async {
         guard summary.isEmpty else { return }
         // 图片/附件类给类型说明（正文是二进制，没有文字摘要）
         switch note.type {
@@ -704,10 +707,21 @@ struct NoteRow: View {
             return
         default: break
         }
-        // 文字类：读本地缓存的内容（读过的笔记才有），剥标签取前 70 字
-        guard let html = NoteCache.shared.loadContent(note.noteId), !html.isEmpty else { return }
-        let text = Self.plainText(from: html)
-        if !text.isEmpty { summary = String(text.prefix(70)) }
+        // 内存缓存命中（滚动回来不用再读盘）
+        if let cached = NoteCache.shared.cachedSummary(note.noteId) {
+            summary = cached
+            return
+        }
+        // 磁盘读取放后台：原来是 onAppear 里同步读，长列表滚动会掉帧
+        let noteId = note.noteId
+        let text: String? = await Task.detached(priority: .utility) {
+            guard let html = NoteCache.shared.loadContent(noteId), !html.isEmpty else { return nil }
+            let plain = NoteRow.plainText(from: html)
+            return plain.isEmpty ? nil : String(plain.prefix(70))
+        }.value
+        guard let text, !text.isEmpty else { return }
+        NoteCache.shared.storeSummary(noteId, text)
+        summary = text
     }
 
     /// HTML → 纯文本（去标签、解常见实体、压空白）

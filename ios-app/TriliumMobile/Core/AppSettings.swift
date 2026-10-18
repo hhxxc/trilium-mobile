@@ -39,7 +39,13 @@ final class AppSettings: ObservableObject {
     }
     @Published var token: String {
         didSet {
-            UserDefaults.standard.set(token, forKey: Keys.token)
+            // 凭据进 Keychain（UserDefaults 是明文）；写失败才退回旧位置，
+            // 宁可弱一点，也不能让用户莫名掉登录
+            if Keychain.set(token) {
+                UserDefaults.standard.removeObject(forKey: Keys.token)
+            } else {
+                UserDefaults.standard.set(token, forKey: Keys.token)
+            }
             // 显式同步登录态，确保 RootView 的条件切换可靠触发
             isLoggedIn = !token.isEmpty
         }
@@ -63,7 +69,12 @@ final class AppSettings: ObservableObject {
     private init() {
         let d = UserDefaults.standard
         let savedServer = d.string(forKey: Keys.server) ?? AppConfig.defaultServer
-        let savedToken = d.string(forKey: Keys.token) ?? ""
+        // token 优先 Keychain；老版本存在 UserDefaults 里的明文 → 迁移后清掉
+        var savedToken = Keychain.get() ?? ""
+        if savedToken.isEmpty, let legacy = d.string(forKey: Keys.token), !legacy.isEmpty {
+            savedToken = legacy
+            if Keychain.set(legacy) { d.removeObject(forKey: Keys.token) }
+        }
         server = savedServer
         serverBackup = d.string(forKey: Keys.serverBackup) ?? AppConfig.defaultBackupServer
         token = savedToken

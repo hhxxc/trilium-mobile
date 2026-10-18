@@ -11,6 +11,7 @@
 		b9daf9e94ba559d4a23c2008 /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = daf85de2f3d3569fafbd0b50 /* AppLogger.swift */; };
 		a739eec146015f4398f5ba69 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = b2637d398dfb55f3936a5cad /* AppSettings.swift */; };
 		8b3254571e405f228b470adc /* ETAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = bce85afc71e65052a9ad963b /* ETAPIClient.swift */; };
+		13792c777d235251ba4f3b4d /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 251b4c83211d5fff9e613a5b /* Keychain.swift */; };
 		3d281f088c275463a620e616 /* NoteCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 939676e24c525f0ca69afc15 /* NoteCache.swift */; };
 		c10582f7a3d15265bd52e0fa /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50008ff267ad5e9094a2dfff /* UpdateChecker.swift */; };
 		e706478840875ca393505001 /* Note.swift in Sources */ = {isa = PBXBuildFile; fileRef = 307a633e02d35e8bb8847ca5 /* Note.swift */; };
@@ -59,6 +60,7 @@
 		daf85de2f3d3569fafbd0b50 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/AppLogger.swift; sourceTree = "<group>"; };
 		b2637d398dfb55f3936a5cad /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/AppSettings.swift; sourceTree = "<group>"; };
 		bce85afc71e65052a9ad963b /* ETAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/ETAPIClient.swift; sourceTree = "<group>"; };
+		251b4c83211d5fff9e613a5b /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/Keychain.swift; sourceTree = "<group>"; };
 		939676e24c525f0ca69afc15 /* NoteCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/NoteCache.swift; sourceTree = "<group>"; };
 		50008ff267ad5e9094a2dfff /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/UpdateChecker.swift; sourceTree = "<group>"; };
 		307a633e02d35e8bb8847ca5 /* Note.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Note.swift; sourceTree = "<group>"; };
@@ -97,6 +99,7 @@
 				daf85de2f3d3569fafbd0b50 /* AppLogger.swift */,
 				b2637d398dfb55f3936a5cad /* AppSettings.swift */,
 				bce85afc71e65052a9ad963b /* ETAPIClient.swift */,
+				251b4c83211d5fff9e613a5b /* Keychain.swift */,
 				939676e24c525f0ca69afc15 /* NoteCache.swift */,
 				50008ff267ad5e9094a2dfff /* UpdateChecker.swift */,
 				307a633e02d35e8bb8847ca5 /* Note.swift */,
@@ -238,6 +241,7 @@
 				b9daf9e94ba559d4a23c2008 /* AppLogger.swift in Sources */,
 				a739eec146015f4398f5ba69 /* AppSettings.swift in Sources */,
 				8b3254571e405f228b470adc /* ETAPIClient.swift in Sources */,
+				13792c777d235251ba4f3b4d /* Keychain.swift in Sources */,
 				3d281f088c275463a620e616 /* NoteCache.swift in Sources */,
 				c10582f7a3d15265bd52e0fa /* UpdateChecker.swift in Sources */,
 				e706478840875ca393505001 /* Note.swift in Sources */,

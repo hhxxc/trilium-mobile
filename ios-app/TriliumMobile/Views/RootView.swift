@@ -146,9 +146,11 @@ struct MainView: View {
                         Button { showTree = true } label: {
                             Image(systemName: "folder")
                         }
+                        .accessibilityLabel("目录")
                         Button { showSettings = true } label: {
                             Image(systemName: "gearshape")
                         }
+                        .accessibilityLabel("设置")
                     }
                 }
                 .sheet(isPresented: $showTree) { TreeView() }
