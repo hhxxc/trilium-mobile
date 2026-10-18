@@ -1075,6 +1075,8 @@ struct ContentWebView: UIViewRepresentable {
         wv.isOpaque = false
         wv.backgroundColor = .clear
         wv.scrollView.backgroundColor = .clear
+        // 隐藏右侧竖向滚动指示条（用户嫌它像一根「进度条」挡内容）
+        wv.scrollView.showsVerticalScrollIndicator = false
         wv.navigationDelegate = context.coordinator
         wv.scrollView.delegate = context.coordinator
         context.coordinator.lastHTML = html
