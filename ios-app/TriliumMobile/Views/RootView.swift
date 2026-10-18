@@ -13,6 +13,8 @@ struct RootView: View {
     @State private var validating = true
     /// 生物识别锁：进后台即锁，回前台需认证（设置页可开关）
     @State private var isLocked = false
+    /// 上次认证失败的原因（展示在锁定遮罩上，别让用户对着屏幕猜）
+    @State private var authError: String?
 
     var body: some View {
         Group {
@@ -38,7 +40,11 @@ struct RootView: View {
             // 先自愈连接：公网证书过期 / 出门回家换网时，主备地址自动互换
             if settings.isLoggedIn { await ServerProbe.ensureReachable() }
             await validateToken()
-            if settings.lockEnabled { authenticate() }
+            // 冷启动也要上锁：以前只有「切过后台」才锁，重新打开 App 是不验的
+            if settings.lockEnabled {
+                isLocked = true
+                authenticate()
+            }
             // 启动补交离线积压（有网才成功，失败留队列）
             await NoteCache.shared.flushPendingOps()
             // 启动即静默检查更新：有新版直接在后台下，不弹任何东西
@@ -92,15 +98,28 @@ struct RootView: View {
                     .font(.system(size: 44))
                     .foregroundColor(Color(red: 0.17, green: 0.61, blue: 0.56))
                 Text("已锁定").font(.headline)
-                Button("解锁") { authenticate() }
-                    .buttonStyle(.borderedProminent)
+                if let authError {
+                    Text(authError)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                }
+                Button("解锁") {
+                    authError = nil
+                    authenticate()
+                }
+                .buttonStyle(.borderedProminent)
             }
         }
     }
 
     private func authenticate() {
-        settings.authenticate { ok in
-            isLocked = !ok  // 取消认证保持锁定，点「解锁」可重试
+        settings.authenticate { ok, reason in
+            isLocked = !ok
+            // 失败原因要露出来：以前失败了界面上只有一句「已锁定」，
+            // 用户看到的是「点了没反应」，实际可能是没录 Face ID / 被锁定 / 缺用途声明
+            authError = ok ? nil : (reason ?? "认证失败")
         }
     }
 

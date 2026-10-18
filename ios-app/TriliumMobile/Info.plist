@@ -51,6 +51,10 @@
 	<!-- 阅读页长按图片 → 保存到相册（仅写入相册，不读取） -->
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>用于将笔记中的图片保存到相册</string>
+	<!-- ⚠️ 应用锁需要这份声明，否则 iOS **不会弹 Face ID**（认证静默失败，
+	     表现为「启用了密码锁但没反应、点解锁也解不开」）。缺它是最常见的坑。 -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>用于解锁 Trilium，保护你的笔记不被他人查看</string>
 	<!-- Trilium 服务端可能是 http（内网），允许任意明文加载 -->
 	<key>NSAppTransportSecurity</key>
 	<dict>

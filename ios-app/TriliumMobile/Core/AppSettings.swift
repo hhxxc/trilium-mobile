@@ -94,17 +94,39 @@ final class AppSettings: ObservableObject {
         isLoggedIn = !savedToken.isEmpty  // 用局部变量，避免 init 里访问 self.token 的初始化顺序问题
     }
 
-    /// 弹出生物识别/密码认证（回调回主线程）
-    func authenticate(_ completion: @escaping (Bool) -> Void) {
+    /// 弹出生物识别/密码认证（回调回主线程）。
+    /// 回调带上失败原因：以前失败只有一个 false，界面上就剩一个点了没反应的「解锁」按钮。
+    func authenticate(_ completion: @escaping (Bool, String?) -> Void) {
         let ctx = LAContext()
         ctx.localizedFallbackTitle = "用密码解锁"
         var err: NSError?
         guard ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) else {
-            completion(true)  // 设备没设任何锁，视为通过
+            // 设备既没 Face ID 也没设密码：没有可用的锁，视为通过（否则用户会被永久锁在外面）
+            AppLogger.shared.log("应用锁：设备不支持认证（\(err?.localizedDescription ?? "未知")），直接放行")
+            completion(true, nil)
             return
         }
-        ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "解锁 Trilium") { ok, _ in
-            DispatchQueue.main.async { completion(ok) }
+        ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "解锁 Trilium") { ok, error in
+            let reason = ok ? nil : Self.describeAuthError(error)
+            if let reason { AppLogger.shared.log("应用锁认证失败：\(reason)") }
+            DispatchQueue.main.async { completion(ok, reason) }
+        }
+    }
+
+    /// LAError → 一句人话（否则只有 "The operation couldn't be completed"）
+    static func describeAuthError(_ error: Error?) -> String {
+        guard let e = error as? LAError else {
+            return error?.localizedDescription ?? "认证失败"
+        }
+        switch e.code {
+        case .userCancel, .appCancel: return "已取消认证"
+        case .systemCancel: return "系统中断了认证，请重试"
+        case .biometryNotAvailable: return "Face ID 不可用"
+        case .biometryNotEnrolled: return "尚未录入 Face ID（去 设置 → 面容 ID 里添加）"
+        case .biometryLockout: return "Face ID 被锁定，请先用密码解锁一次设备"
+        case .passcodeNotSet: return "设备未设置密码"
+        case .authenticationFailed: return "认证失败，请重试"
+        default: return e.localizedDescription
         }
     }
 
