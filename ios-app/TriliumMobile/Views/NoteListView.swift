@@ -56,8 +56,11 @@ struct NoteListView: View {
     @State private var searchHistory: [String] = []
     /// 离线待同步操作数（顶部提示条）
     @State private var pendingCount = 0
-    /// 左滑抽屉：目录树覆盖层（学有道云/Obsidian——树和列表共存，不用二选一）
-    @State private var drawerOpen = false
+    /// 左滑抽屉：目录树覆盖层（学有道云/Obsidian——树和列表共存，不用二选一）。
+    /// ⚠️ 由 MainView 持有：抽屉是 ZStack 里的覆盖层，但导航栏（toolbar 按钮）由
+    ///    NavigationView 单独渲染，层级永远高于内容区 → 不把状态提上去，
+    ///    抽屉打开时右上角的「目录/设置」按钮会浮在遮罩上（穿模）并且还能点到。
+    @Binding var drawerOpen: Bool
     /// 整理（移动/克隆）目标选择
     @State private var organizeTarget: OrganizeTarget?
     /// 顶部轻提示（收藏/移动结果）
@@ -115,7 +118,8 @@ struct NoteListView: View {
         .toolbar {
             // 抽屉除了边缘手势，也给一个明确入口（不是所有人都会去摸左边缘）
             ToolbarItem(placement: .navigationBarLeading) {
-                if !isSearching && browseMode != .tree {
+                // 抽屉打开时收起：导航栏压在抽屉之上，留着按钮就是穿模 + 可点穿
+                if !drawerOpen && !isSearching && browseMode != .tree {
                     Button {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { drawerOpen = true }
                     } label: {
@@ -126,8 +130,9 @@ struct NoteListView: View {
             }
         }
         // 顶部常驻更新条：下载中/待安装时一直挂在列表上方，点开是常驻下载页
+        // （抽屉打开时同样收起：safeAreaInset 的条带也渲染在 ZStack 之上）
         .safeAreaInset(edge: .top, spacing: 0) {
-            if updater.phase.isDownloading || updater.phase.isReady {
+            if !drawerOpen && (updater.phase.isDownloading || updater.phase.isReady) {
                 updateBanner
             }
         }
@@ -150,6 +155,13 @@ struct NoteListView: View {
         .onAppear {
             searchHistory = UserDefaults.standard.stringArray(forKey: "trilium.searchHistory") ?? []
             pendingCount = NoteCache.shared.pendingOps.count
+        }
+        // 搜索框在导航栏里（层级高于遮罩，压不住）：抽屉开着时一旦开始输入就顺手收回，
+        // 否则会出现「抽屉还开着、导航栏已切成搜索态」的错位画面
+        .onChange(of: searchQuery) { q in
+            if drawerOpen && !q.isEmpty {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { drawerOpen = false }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NoteCache.pendingOpsChanged)) { _ in
             pendingCount = NoteCache.shared.pendingOps.count

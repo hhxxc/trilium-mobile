@@ -137,20 +137,32 @@ struct MainView: View {
     @EnvironmentObject private var settings: AppSettings
     @State private var showTree = false
     @State private var showSettings = false
+    /// 首页抽屉（目录树）是否打开。状态放在这里是因为导航栏按钮由 NavigationView
+    /// 渲染、层级高于 NoteListView 内容区 —— 抽屉打开时必须由这里把按钮收掉，
+    /// 否则「目录 / 设置」两个图标会浮在遮罩和抽屉之上（穿模且能点穿）。
+    @State private var drawerOpen = false
 
     var body: some View {
         NavigationView {
-            NoteListView()
+            NoteListView(drawerOpen: $drawerOpen)
                 .toolbar {
                     ToolbarItemGroup(placement: .navigationBarTrailing) {
                         Button { showTree = true } label: {
                             Image(systemName: "folder")
                         }
                         .accessibilityLabel("目录")
+                        .opacity(drawerOpen ? 0 : 1)
+                        .disabled(drawerOpen)
+                        .allowsHitTesting(!drawerOpen)
+                        .accessibilityHidden(drawerOpen)
                         Button { showSettings = true } label: {
                             Image(systemName: "gearshape")
                         }
                         .accessibilityLabel("设置")
+                        .opacity(drawerOpen ? 0 : 1)
+                        .disabled(drawerOpen)
+                        .allowsHitTesting(!drawerOpen)
+                        .accessibilityHidden(drawerOpen)
                     }
                 }
                 .sheet(isPresented: $showTree) { TreeView() }
