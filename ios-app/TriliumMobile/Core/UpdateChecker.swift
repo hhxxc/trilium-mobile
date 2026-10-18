@@ -428,13 +428,20 @@ final class UpdateCenter: NSObject, ObservableObject {
             let live = tasks.compactMap { $0 as? URLSessionDownloadTask }.first
             DispatchQueue.main.async {
                 guard let task = live else {
+                    guard case .downloading = self.phase else { return }
                     // 记录说「下载中」但任务已经死了（例如上次被强制退出）→ 重启下载
-                    if case .downloading = self.phase,
-                       let v = self.latestVersion,
+                    if let v = self.latestVersion,
                        let s = self.lastDownloadURL,
                        let url = URL(string: s) {
                         AppLogger.shared.log("发现残留进度但任务已不存在，重新下载 v\(v)")
                         self.startDownload(version: v, url: url)
+                    } else {
+                        // ⚠️ 历史状态残缺（没有可用 URL）：以前这里直接 return，
+                        //   结果「下载中 0 B」永久卡死，点「立即检查更新」也救不回来（用户实测）。
+                        //   现在重置成空闲，下一次静默检查会重新拉一遍。
+                        AppLogger.shared.log("残留下载状态无法续上（缺 URL），重置为空闲")
+                        self.phase = .idle
+                        self.persist()
                     }
                     return
                 }
@@ -671,6 +678,23 @@ final class UpdateCenter: NSObject, ObservableObject {
         phase = .idle
         persist()
         AppLogger.shared.log("用户取消更新下载")
+    }
+
+    /// 用户点「重新开始下载」：清掉失败冷却与残留状态，立刻重来一遍
+    func restartDownload() {
+        failedVersion = nil
+        failedAt = nil
+        cancelDownload()
+        Task { await silentCheck(minInterval: 0, ignoreCooldown: true) }
+    }
+
+    /// 自我修复：状态是「下载中」但根本没有活任务（进程重启 / 任务丢失）→ 重置后重查
+    func recoverIfStuck() {
+        guard phase.isDownloading, currentTask == nil else { return }
+        AppLogger.shared.log("「下载中」但没有活任务，重置并重新检查")
+        phase = .idle
+        persist()
+        Task { await silentCheck(minInterval: 0, ignoreCooldown: true) }
     }
 
     /// 已下载的安装包（若有）

@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Combine
 
 /// 「软件更新」常驻页。
 ///
@@ -9,6 +10,12 @@ import UIKit
 struct UpdateView: View {
     @ObservedObject private var updater = UpdateCenter.shared
     @Environment(\.dismiss) private var dismiss
+
+    /// 卡住检测：3 秒打一次点，字节数 15 秒没变化就认为「卡住了」，给用户一个明确出口
+    @State private var lastBytes: Int64 = -1
+    @State private var lastChangeAt = Date()
+    @State private var stalled = false
+    private let ticker = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
     private let accent = Color(red: 0.17, green: 0.61, blue: 0.56)
 
@@ -26,6 +33,9 @@ struct UpdateView: View {
             VStack(spacing: 14) {
                 headerCard
                 statusCard
+                if stalled {
+                    stalledCard
+                }
                 actionArea
                 Text("下载使用系统后台传输：切到别的 App、锁屏、关掉这个页面都会继续；重开 App 会自动接上进度，不用从头再来。")
                     .font(.caption)
@@ -43,12 +53,63 @@ struct UpdateView: View {
                 Button("完成") { dismiss() }
             }
         }
+        .onReceive(ticker) { _ in updateStallDetection() }
         .onAppear {
+            // 状态说「下载中」但其实没有活任务（进程重启/任务丢失）→ 先自愈
+            updater.recoverIfStuck()
             // 进页面时如果还没查过，就主动查一次（已经在下载则不打扰）
             if case .idle = updater.phase {
                 Task { await updater.silentCheck(minInterval: 0) }
             }
         }
+    }
+
+    /// 字节数长时间不动 = 卡住（典型：连不上的源不会报错，只是没有数据）
+    private func updateStallDetection() {
+        guard case .downloading(let received, _) = updater.phase else {
+            stalled = false
+            lastBytes = -1
+            return
+        }
+        if received != lastBytes {
+            lastBytes = received
+            lastChangeAt = Date()
+            stalled = false
+        } else if Date().timeIntervalSince(lastChangeAt) > 15 {
+            stalled = true
+        }
+    }
+
+    /// 卡住时的出口：一键重来（会清掉冷却、重新挑源）
+    private var stalledCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                Text("下载卡住了（15 秒没有进展）")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            Text("多半是当前下载源连不上。可以重新开始，系统会自动换到下一个源。")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            Button {
+                stalled = false
+                lastBytes = -1
+                lastChangeAt = Date()
+                updater.restartDownload()
+            } label: {
+                Text("重新开始下载")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 40)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(accent))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(cardBackground)
     }
 
     // MARK: - 卡片
