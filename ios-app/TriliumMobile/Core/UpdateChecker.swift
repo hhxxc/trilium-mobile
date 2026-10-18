@@ -139,21 +139,37 @@ enum UpdateChecker {
         return nil
     }
 
-    /// 构造按优先级排序的下载候选：清单给的地址在先用，GitHub Releases 原链兜底。
-    /// ⚠️ 兜底不是多余的：2026-10-17 内网穿透的通配证书过期，NAS 域名整条链路 TLS 失败，
-    ///    只试一个源就等于更新彻底废掉 —— 而 GitHub 那条是完全独立的域名。
-    static func downloadCandidates(ipaURL: URL, version: String? = nil) -> [URL] {
+    /// 下载候选源，按「国内能不能秒通」排序（照抄巢记的结论：手机直连 github 大概率被墙，
+    /// 表现不是快速失败而是**挂死到超时**，所以 GitHub 永远只能排最后兜底）：
+    ///
+    /// 1. 清单给的地址（NAS 域名直链，正常情况秒下）
+    /// 2. **内网镜像**：清单域名整条链路挂了（证书过期 / 穿透故障）时，家里 Wi-Fi 直接打 NAS 内网端口
+    /// 3. GitHub Releases 原链（有代理或能直连的设备才走通，保底）
+    static func downloadCandidates(ipaURL: URL, version: String?) -> [URL] {
         var candidates: [URL] = []
         func push(_ url: URL?) {
             guard let url, !candidates.contains(url) else { return }
             candidates.append(url)
         }
+
         push(ipaURL)
+        // 只对「穿透域名」加内网镜像；本来就是内网/其他源就没必要
+        if ipaURL.host?.lowercased().contains("ddnsto") == true {
+            push(lanMirrorURL(fileName: ipaURL.lastPathComponent))
+        }
         if let v = version, !v.isEmpty,
            let gh = URL(string: "https://github.com/\(repo)/releases/download/v\(v)/trilium-mobile.ipa") {
             push(gh)
         }
         return candidates
+    }
+
+    /// 内网镜像地址：从「备用地址」里取 NAS 主机名，端口沿用 ezbookkeeping 的 9180。
+    /// 取不到就是 nil（不猜，猜错只会多一次超时）。
+    static func lanMirrorURL(fileName: String) -> URL? {
+        let backup = AppSettings.shared.serverBackup
+        guard let host = URL(string: backup)?.host, !host.isEmpty, !fileName.isEmpty else { return nil }
+        return URL(string: "http://\(host):9180/api/nestkeep/\(fileName)")
     }
 
     // MARK: - 版本号工具
@@ -292,6 +308,17 @@ final class UpdateCenter: NSObject, ObservableObject {
     private var currentURL: URL?
     /// 懒创建的前台会话（只在后台通道确实不可用时才建）
     private var fallbackSession: URLSession?
+
+    // MARK: 停滞看门狗 + 同源断点续传（照搬巢记的两条经验）
+    /// 最后一个字节到达的时间。连不上/被墙的源不会报错，只会「安静地挂着」，
+    /// 所以必须自己盯着——否则用户看到的是「0% 卡死」，而不是快速换源
+    private var lastProgressAt = Date()
+    private var stallWork: DispatchWorkItem?
+    private var stallLimit: TimeInterval = 40
+    /// 同一源内已经续传了几次（超过 2 次就换源，别在死源上磨）
+    private var sourceResumeCount = 0
+    /// 我们自己主动取消（换源/停表），用来和真正的失败区分
+    private var intentionalCancel = false
 
     /// 这些错误码属于「会话级故障」：换源没用，得换通道
     private static let sessionLevelCodes: Set<Int> = [
@@ -520,6 +547,7 @@ final class UpdateCenter: NSObject, ObservableObject {
         }
         candidateQueue.removeFirst()
         channel = preferForeground ? .foreground : .background
+        sourceResumeCount = 0     // 换了源，续传计数重来
         attempt(url)
     }
 
@@ -527,6 +555,7 @@ final class UpdateCenter: NSObject, ObservableObject {
     private func attempt(_ url: URL) {
         currentURL = url
         lastDownloadURL = url.absoluteString
+        lastProgressAt = Date()
         AppLogger.shared.log("\(channel.rawValue)下载开始: v\(latestVersion ?? "?") ← \(url.host ?? "?")")
 
         var req = URLRequest(url: url)
@@ -543,11 +572,63 @@ final class UpdateCenter: NSObject, ObservableObject {
         versionByTask[task.taskIdentifier] = latestVersion ?? ""
         currentTask = task
         task.resume()
+        armStallWatchdog(for: url)
         beginUIBackgroundTask()
+    }
+
+    // MARK: - 停滞看门狗
+
+    /// 盯住「多久没进来一个字节」。内网源给 8 秒（本地不通就是不通），
+    /// 公网源给 40 秒（要留出慢速移动网络的时间）。到点没数据就换下一个候选。
+    private func armStallWatchdog(for url: URL) {
+        stallWork?.cancel()
+        let host = url.host ?? ""
+        let isPrivate = host.hasPrefix("192.168.") || host.hasPrefix("10.") || host.hasPrefix("172.")
+        stallLimit = isPrivate ? 8 : 40
+        scheduleStallCheck(url)
+    }
+
+    private func scheduleStallCheck(_ url: URL) {
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.currentURL == url, self.currentTask != nil else { return }
+            let idle = Date().timeIntervalSince(self.lastProgressAt)
+            if idle >= self.stallLimit {
+                AppLogger.shared.log("下载源 \(Int(self.stallLimit)) 秒没数据（\(url.host ?? "?")），换下一个候选源")
+                self.abandonCurrentSource()
+            } else {
+                self.scheduleStallCheck(url)
+            }
+        }
+        stallWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
+    }
+
+    /// 放弃当前源：先标记「是我们主动砍的」，再取消任务，避免被当成真失败
+    private func abandonCurrentSource() {
+        intentionalCancel = true
+        currentTask?.cancel()
+        currentTask = nil
+        if !candidateQueue.isEmpty {
+            beginNextCandidate()
+        } else {
+            finishAllCandidatesFailed("下载超时：所有下载源都没有响应，请检查网络（家里可直连内网地址手动安装）")
+        }
+    }
+
+    /// 同一源内用系统的 resumeData 续传（不换源）
+    private func resumeDownload(from resumeData: Data, url: URL) {
+        let s: URLSession = (channel == .foreground) ? foregroundSession() : session
+        let task = s.downloadTask(withResumeData: resumeData)
+        versionByTask[task.taskIdentifier] = latestVersion ?? ""
+        currentTask = task
+        lastProgressAt = Date()
+        task.resume()
+        armStallWatchdog(for: url)
     }
 
     /// 所有源都试完了：记失败 + 开冷却，别让静默检查每 30 秒再刷一遍
     private func finishAllCandidatesFailed(_ reason: String = "所有下载源都失败，请稍后重试") {
+        stallWork?.cancel()
         failedVersion = latestVersion
         failedAt = Date()
         currentURL = nil
@@ -579,10 +660,12 @@ final class UpdateCenter: NSObject, ObservableObject {
     }
 
     func cancelDownload() {
+        stallWork?.cancel()
         currentTask?.cancel()
         currentTask = nil
         candidateQueue.removeAll()
         currentURL = nil
+        sourceResumeCount = 0
         failedVersion = nil
         failedAt = nil
         phase = .idle
@@ -629,6 +712,7 @@ extension UpdateCenter: URLSessionDownloadDelegate {
                     totalBytesExpectedToWrite: Int64) {
         let total = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : 0
         let now = Date()
+        lastProgressAt = now          // 看门狗靠这个判断「还有没有在动」
         let shouldPersist = now.timeIntervalSince(lastPersist) > 1.0
         if shouldPersist {
             lastPersist = now
@@ -645,6 +729,7 @@ extension UpdateCenter: URLSessionDownloadDelegate {
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                     didFinishDownloadingTo location: URL) {
+        stallWork?.cancel()           // 已经下完，停表
         let version = versionByTask[downloadTask.taskIdentifier] ?? (latestVersion ?? "")
         guard !version.isEmpty else {
             setPhase(.failed("内部错误：丢失版本号"))
@@ -685,13 +770,25 @@ extension UpdateCenter: URLSessionDownloadDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let error else { return }
         let ns = error as NSError
-        if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
+        if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled {
+            // 我们自己砍的（看门狗换源 / 用户取消 / 重建会话）→ 上层已经接管，别再当失败处理
+            DispatchQueue.main.async { self.intentionalCancel = false }
+            return
+        }
         DispatchQueue.main.async {
             // 任务失败但本地已有完整包 → 当作完成
             if let v = self.latestVersion, let existing = UpdateFileStore.existingDownload(version: v) {
                 self.phase = .ready(version: v, fileURL: existing)
                 self.failedVersion = nil
                 self.persist()
+                return
+            }
+            // 同一源内先断点续传（学巢记）：网络抖动导致的失败，续传比重下整包划算
+            if let resume = ns.userInfo[NSURLSessionDownloadTaskResumeData] as? Data,
+               self.sourceResumeCount < 2, let url = self.currentURL {
+                self.sourceResumeCount += 1
+                AppLogger.shared.log("同源断点续传（第 \(self.sourceResumeCount) 次）")
+                self.resumeDownload(from: resume, url: url)
                 return
             }
             // 会话级故障（-1 / -996 / -997）：换源没用，先换通道
