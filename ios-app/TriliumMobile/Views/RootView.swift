@@ -56,6 +56,7 @@ struct RootView: View {
         .onChange(of: scenePhase) { phase in
             guard !validating else { return }
             if phase == .background {
+                CrashBreadcrumb.markBackground()
                 if settings.lockEnabled { isLocked = true }
             } else if phase == .active {
                 if settings.lockEnabled, isLocked { authenticate() }

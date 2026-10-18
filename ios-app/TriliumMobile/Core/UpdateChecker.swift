@@ -321,7 +321,6 @@ final class UpdateCenter: NSObject, ObservableObject {
     private var preferForeground = false
     private var currentURL: URL?
     /// 懒创建的前台会话（只在后台通道确实不可用时才建）
-    private var fallbackSession: URLSession?
 
     // MARK: 停滞看门狗 + 同源断点续传（照搬巢记的两条经验）
     /// 最后一个字节到达的时间。连不上/被墙的源不会报错，只会「安静地挂着」，
@@ -335,6 +334,8 @@ final class UpdateCenter: NSObject, ObservableObject {
     private var intentionalCancel = false
     /// 20 秒一次的状态-任务对账巡检（防止「下载中」楔死）
     private var guardTimer: DispatchSourceTimer?
+    /// 本次下载是否已经重建过会话（只重建一次，之后换源）
+    private var sessionRebuilt = false
 
     /// 这些错误码属于「会话级故障」：换源没用，得换通道
     private static let sessionLevelCodes: Set<Int> = [
@@ -360,7 +361,7 @@ final class UpdateCenter: NSObject, ObservableObject {
 
     private override init() {
         super.init()
-        session = makeBackgroundSession()
+        session = makeSession()
 
         lastCheckedAt = UserDefaults.standard.object(forKey: lastCheckKey) as? Date
         restore()
@@ -401,28 +402,22 @@ final class UpdateCenter: NSObject, ObservableObject {
         }
     }
 
-    /// 后台会话配置（重建时复用，两处必须完全一致）
-    private func makeBackgroundSession() -> URLSession {
-        let cfg = URLSessionConfiguration.background(withIdentifier: sessionIdentifier)
-        // App 被系统回收后，下载完成仍然把 App 拉起来交付事件
-        cfg.sessionSendsLaunchEvents = true
-        // 用户主动要更新 → 立刻下，不要等 Wi-Fi/充电（discretionary 会无限期拖延）
-        cfg.isDiscretionary = false
-        cfg.allowsCellularAccess = true
-        cfg.timeoutIntervalForRequest = 30
-        cfg.httpMaximumConnectionsPerHost = 1
-        return URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
-    }
-
-    /// 前台会话（降级通道）：App 活着就能下，被挂起会中断——好过完全下不了
-    private func foregroundSession() -> URLSession {
-        if let s = fallbackSession { return s }
+    /// 下载会话：**普通会话**（不用 background）。
+    ///
+    /// ⚠️ 为什么彻底放弃 background 会话（两条都是实测/已知硬伤）：
+    ///   ① TrollStore / ad-hoc 签名下 background 会话经常「建了但永远不回调」——
+    ///      界面表现就是「下载中 0 B」，连错误都没有
+    ///   ② 重装 App 后同名 identifier 可能还有残留，此时
+    ///      `URLSessionConfiguration.background(withIdentifier:)` 会抛 NSException ——
+    ///      Swift 接不住 → **直接闪退**
+    /// 安装包只有 2 MB，普通会话几秒就下完；配合 beginBackgroundTask 足够撑过短暂切后台。
+    private func makeSession() -> URLSession {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 30
-        cfg.timeoutIntervalForResource = 600
-        let s = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
-        fallbackSession = s
-        return s
+        cfg.timeoutIntervalForResource = 300
+        cfg.allowsCellularAccess = true
+        cfg.httpMaximumConnectionsPerHost = 2
+        return URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
     }
 
     // MARK: 状态落盘
@@ -624,15 +619,7 @@ final class UpdateCenter: NSObject, ObservableObject {
 
         var req = URLRequest(url: url)
         req.setValue("TriliumMobile", forHTTPHeaderField: "User-Agent")
-        // 注意：session 是隐式解包可选（URLSession!），三元表达式会把结果推成 URLSession?，
-        // 必须显式声明类型，否则 downloadTask 调不到（CI 编译报错过一次）
-        let s: URLSession
-        if channel == .foreground {
-            s = foregroundSession()
-        } else {
-            s = session
-        }
-        let task = s.downloadTask(with: req)
+        let task = session.downloadTask(with: req)
         versionByTask[task.taskIdentifier] = latestVersion ?? ""
         currentTask = task
         task.resume()
@@ -682,8 +669,7 @@ final class UpdateCenter: NSObject, ObservableObject {
 
     /// 同一源内用系统的 resumeData 续传（不换源）
     private func resumeDownload(from resumeData: Data, url: URL) {
-        let s: URLSession = (channel == .foreground) ? foregroundSession() : session
-        let task = s.downloadTask(withResumeData: resumeData)
+        let task = session.downloadTask(withResumeData: resumeData)
         versionByTask[task.taskIdentifier] = latestVersion ?? ""
         currentTask = task
         lastProgressAt = Date()
@@ -701,28 +687,18 @@ final class UpdateCenter: NSObject, ObservableObject {
         setPhase(.failed(reason))
     }
 
-    /// 会话级故障就换通道：后台 → 重建后台 → 前台
+    /// 会话级故障：重建一次会话再试同一源；重建过还不行就交给上层换源
     private func escalateIfSessionLevelFailure(_ ns: NSError) -> Bool {
         guard ns.domain == NSURLErrorDomain,
               Self.sessionLevelCodes.contains(ns.code),
               let url = currentURL else { return false }
-        switch channel {
-        case .background:
-            AppLogger.shared.log("后台会话异常（错误码 \(ns.code)），重建会话后重试同一源")
-            session.invalidateAndCancel()
-            session = makeBackgroundSession()
-            channel = .backgroundRebuilt
-            attempt(url)
-            return true
-        case .backgroundRebuilt:
-            AppLogger.shared.log("重建后仍失败（错误码 \(ns.code)），降到前台会话下载（切后台可能中断）")
-            preferForeground = true
-            channel = .foreground
-            attempt(url)
-            return true
-        case .foreground:
-            return false   // 前台也失败 → 交给上层换源
-        }
+        guard !sessionRebuilt else { return false }
+        sessionRebuilt = true
+        AppLogger.shared.log("下载会话异常（错误码 \(ns.code)），重建会话后重试同一源")
+        session.invalidateAndCancel()
+        session = makeSession()
+        attempt(url)
+        return true
     }
 
     func cancelDownload() {
