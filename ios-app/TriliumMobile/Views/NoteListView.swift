@@ -746,7 +746,8 @@ struct NoteRow: View {
     }
 
     /// HTML → 纯文本（去标签、解常见实体、压空白）
-    static func plainText(from html: String) -> String {
+    /// nonisolated：这个方法要在后台线程（Task.detached）里跑，不能挂 MainActor
+    nonisolated static func plainText(from html: String) -> String {
         var s = html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
         let entities: [(String, String)] = [
             ("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),

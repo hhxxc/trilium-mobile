@@ -177,7 +177,7 @@ struct ETAPIClient {
                 if e.code == .cancelled { throw e }
                 lastError = e
             } catch {
-                lastError = e
+                lastError = error
             }
         }
         throw lastError ?? APIError.invalidResponse
