@@ -5,6 +5,10 @@ enum APIError: LocalizedError {
     case invalidURL
     case http(status: Int)
     case invalidResponse
+    /// 数据能拿到但解析不了（服务端换版本、隧道返回 HTML 错误页等）。
+    /// ⚠️ 必须和「真的没有数据」区分开：旧代码解析失败直接返回空数组，
+    ///   界面上表现为「列表空白」，看不出到底是没笔记还是解析炸了（历史踩坑）。
+    case decodeFailed(context: String)
     case server(message: String)
 
     var errorDescription: String? {
@@ -12,6 +16,7 @@ enum APIError: LocalizedError {
         case .invalidURL: return "地址无效"
         case .http(let status): return "HTTP \(status)"
         case .invalidResponse: return "响应格式异常"
+        case .decodeFailed(let context): return "数据解析失败（\(context)）"
         case .server(let msg): return msg
         }
     }
@@ -41,9 +46,59 @@ struct ETAPIClient {
     private var baseURL: URL { AppSettings.shared.serverURL }
     private var token: String { AppSettings.shared.token }
 
+    // MARK: - 诊断辅助
+    //
+    // 目的：任何「打开是空的」「点了没反应」都能在设置页的诊断日志里看到一句原因，
+    // 而不是只有上层一句干巴巴的 localizedDescription。
+    // 约束：只记结构线索（字节数 / JSON 顶层键 / 报错原文前 160 字），不记笔记正文，避免刷屏。
+
+    /// 把响应体压成一行短摘要（用于日志，不进 UI 正文）
+    private func snippet(_ data: Data, limit: Int = 160) -> String {
+        guard !data.isEmpty else { return "<空响应>" }
+        guard let text = String(data: data, encoding: .utf8) else {
+            return "<\(data.count) 字节，非 UTF-8>"
+        }
+        let oneLine = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return oneLine.count > limit ? String(oneLine.prefix(limit)) + "…" : oneLine
+    }
+
+    /// JSON 顶层形状，例如 `object{results:[…]}`
+    private func shape(of data: Data) -> String {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) else {
+            return "非 JSON：\(snippet(data))"
+        }
+        if let dict = obj as? [String: Any] {
+            let keys = dict.keys.sorted().prefix(8).joined(separator: ",")
+            return "object{\(keys)}"
+        }
+        if let arr = obj as? [Any] {
+            return "array(\(arr.count))"
+        }
+        return "标量"
+    }
+
+    /// 解码笔记列表：兼容 `{results:[…]}` 与裸数组两种返回；
+    /// 两种都不认时记日志 + 抛错（不再静默返回空数组）。
+    private func decodeNotes(_ data: Data, context: String) throws -> [Note] {
+        let decoder = JSONDecoder()
+        if let resp = try? decoder.decode(SearchResponse.self, from: data), let r = resp.results {
+            AppLogger.shared.log("\(context)：{results} 包裹格式，\(r.count) 条")
+            return r
+        }
+        if let arr = try? decoder.decode([Note].self, from: data) {
+            AppLogger.shared.log("\(context)：裸数组格式，\(arr.count) 条")
+            return arr
+        }
+        AppLogger.shared.log("❌ \(context)：解析失败 bytes=\(data.count) 形状=\(shape(of: data))")
+        throw APIError.decodeFailed(context: context)
+    }
+
     // MARK: - 底层请求
 
-    /// 发请求，返回 (data, response)；401（非登录接口）时抛 SessionExpired 信号
+    /// 发请求，返回 data；401（非登录接口）时广播会话过期
     private func raw(_ path: String, method: String = "GET", query: [URLQueryItem] = [],
                      body: Data? = nil, contentType: String = "application/json",
                      auth: Bool = true) async throws -> Data {
@@ -69,10 +124,14 @@ struct ETAPIClient {
         if let http = resp as? HTTPURLResponse {
             if http.statusCode == 401 && !path.hasSuffix("/auth/login") {
                 // 服务端重启导致 token 失效：广播会话过期，踢回登录
+                AppLogger.shared.log("⚠️ \(method) \(path) → 401（token 失效，广播会话过期）")
                 NotificationCenter.default.post(name: .sessionExpired, object: nil)
                 throw APIError.http(status: 401)
             }
             guard (200..<300).contains(http.statusCode) else {
+                // 记 path + 状态码 + 响应摘要：401/403/429/502 各自原因差别很大，
+                // 只抛「HTTP 502」等于没信息（ddnsto 隧道 502 是历史常客）
+                AppLogger.shared.log("⚠️ \(method) \(path) → HTTP \(http.statusCode)：\(snippet(data))")
                 throw APIError.http(status: http.statusCode)
             }
         }
@@ -114,7 +173,12 @@ struct ETAPIClient {
 
     func getContent(_ id: String) async throws -> String {
         let data = try await raw("/etapi/notes/\(id)/content")
-        return String(data: data, encoding: .utf8) ?? ""
+        guard let text = String(data: data, encoding: .utf8) else {
+            // ⚠️ 不能静默返回 ""：编辑页会把它当正文加载，一保存就把服务端内容清空
+            AppLogger.shared.log("❌ 正文解码失败[\(id)]：\(data.count) 字节非 UTF-8")
+            throw APIError.decodeFailed(context: "正文[\(id)]")
+        }
+        return text
     }
 
     /// 二进制内容（image/file 笔记的 content 是二进制）
@@ -227,12 +291,21 @@ struct ETAPIClient {
         // 用 branch 详情核对父级：parentNoteIds / parentBranchIds 的顺序不保证一一对应
         var oldBranchId: String?
         for bid in branchIds {
-            if let b = try? await getBranch(bid), b.parentNoteId == parentNoteId {
-                oldBranchId = bid
-                break
+            do {
+                let b = try await getBranch(bid)
+                if b.parentNoteId == parentNoteId {
+                    oldBranchId = bid
+                    break
+                }
+            } catch {
+                // 单个分支查不到不该直接中断移动，但要知道是哪一个
+                AppLogger.shared.log("移动：分支 \(bid) 详情查询失败（\(error.localizedDescription)）")
             }
         }
-        if oldBranchId == nil, branchIds.count == 1 { oldBranchId = branchIds[0] } // 单父级兜底
+        if oldBranchId == nil, branchIds.count == 1 {
+            oldBranchId = branchIds[0] // 单父级兜底
+            AppLogger.shared.log("移动：未匹配到父级分支，按单父级兜底用 \(branchIds[0])")
+        }
         try await addBranch(noteId: noteId, parentNoteId: targetParentId)
         if let old = oldBranchId { try await deleteBranch(old) }
     }
@@ -241,11 +314,18 @@ struct ETAPIClient {
     /// 万一该语法在当前版本不生效，退回「最近 200 条里按 attributes 过滤」——
     /// 两条都失败也不至于把收藏页做成永久空白。
     func bookmarkedNotes(limit: Int = 50) async throws -> [Note] {
-        if let r = try? await searchNotes("#bookmarked", limit: limit), !r.isEmpty {
-            return r
+        do {
+            let r = try await searchNotes("#bookmarked", limit: limit)
+            if !r.isEmpty { return r }
+            AppLogger.shared.log("收藏：标签搜索返回 0 条 → 走「最近 200 条按 attributes 过滤」兜底")
+        } catch {
+            // 标签语法在个别版本不生效时会 400/解析失败，兜底继续，但必须留痕
+            AppLogger.shared.log("收藏：标签搜索失败（\(error.localizedDescription)）→ 走兜底")
         }
         let recent = try await recentNotes(limit: 200)
-        return recent.filter { $0.isBookmarked }
+        let hits = recent.filter { $0.isBookmarked }
+        AppLogger.shared.log("收藏：兜底命中 \(hits.count)/\(recent.count) 条")
+        return hits
     }
 
     func createNote(parentNoteId: String, title: String, content: String = "", type: String = "text") async throws -> CreateNoteResponse {
@@ -266,10 +346,7 @@ struct ETAPIClient {
         var q = [URLQueryItem(name: "search", value: query)]
         q.append(URLQueryItem(name: "limit", value: String(limit)))
         let data = try await raw("/etapi/notes", query: q)
-        if let resp = try? JSONDecoder().decode(SearchResponse.self, from: data), let r = resp.results {
-            return r
-        }
-        return (try? JSONDecoder().decode([Note].self, from: data)) ?? []
+        return try decodeNotes(data, context: "搜索「\(query)」")
     }
 
     /// 「匹配所有笔记」的搜索表达式。
@@ -285,10 +362,7 @@ struct ETAPIClient {
         q.append(URLQueryItem(name: "orderDirection", value: "desc"))
         q.append(URLQueryItem(name: "limit", value: String(limit)))
         let data = try await raw("/etapi/notes", query: q)
-        if let resp = try? JSONDecoder().decode(SearchResponse.self, from: data), let r = resp.results {
-            return r
-        }
-        return (try? JSONDecoder().decode([Note].self, from: data)) ?? []
+        return try decodeNotes(data, context: "最近列表(\(limit))")
     }
 
     /// 子树下的直接子笔记（树的展开用）。
@@ -307,30 +381,37 @@ struct ETAPIClient {
         }
 
         // 分批并发（每批 6 个），防止大目录瞬间打爆隧道
-        var out: [(Int, Note)] = []
+        var out: [(Int, Note, Bool)] = []
         let batchSize = 6
         for start in stride(from: 0, to: ids.count, by: batchSize) {
             let batch = Array(ids.enumerated())[start..<min(start + batchSize, ids.count)]
-            let results = await withTaskGroup(of: (Int, Note).self) { group in
+            let results = await withTaskGroup(of: (Int, Note, Bool).self) { group in
                 for (i, id) in batch {
                     group.addTask {
-                        if let full = try? await self.getNote(id) {
-                            return (i, full)
+                        do {
+                            let full = try await self.getNote(id)
+                            return (i, full, true)
+                        } catch {
+                            AppLogger.shared.log("目录：子笔记 \(id) 详情失败（\(error.localizedDescription)）")
+                            return (i, Note(noteId: id, title: "（加载失败）", type: "text",
+                                             mime: nil, isProtected: nil, isArchived: nil, blobId: nil,
+                                             childNoteIds: [], parentNoteIds: nil, parentBranchIds: nil,
+                                             childBranchIds: nil, attributes: nil, dateCreated: nil,
+                                             dateModified: nil, utcDateCreated: nil, utcDateModified: nil), false)
                         }
-                        return (i, Note(noteId: id, title: "（加载失败）", type: "text",
-                                        mime: nil, isProtected: nil, isArchived: nil, blobId: nil,
-                                        childNoteIds: [], parentNoteIds: nil, parentBranchIds: nil,
-                                        childBranchIds: nil, attributes: nil, dateCreated: nil,
-                                        dateModified: nil, utcDateCreated: nil, utcDateModified: nil))
                     }
                 }
-                var r: [(Int, Note)] = []
-                for await pair in group { r.append(pair) }
+                var r: [(Int, Note, Bool)] = []
+                for await item in group { r.append(item) }
                 return r
             }
             out.append(contentsOf: results)
         }
-        return out.sorted { $0.0 < $1.0 }.map(\.1)
+        let failed = out.filter { !$0.2 }.count
+        if failed > 0 {
+            AppLogger.shared.log("目录[\(parentId)]：\(failed)/\(out.count) 个子笔记详情加载失败（占位显示）")
+        }
+        return out.sorted { $0.0 < $1.0 }.map { $0.1 }
     }
 
     // MARK: - 树形层级的回退方案（notePath）
@@ -379,8 +460,7 @@ struct ETAPIClient {
         Self.pathCacheTime = now
 
         // 解码成 Note（复用同一份 data，避免二次请求）
-        let notes = (try? JSONDecoder().decode(SearchResponse.self, from: data))?.results
-            ?? (try? JSONDecoder().decode([Note].self, from: data)) ?? []
+        let notes = try decodeNotes(data, context: "notePath 回退")
         // 存下来供 childrenFromPathCache 用
         Self.noteCacheFromPathFallback = notes
         return Self.childrenFromPathCache(of: parentId)
@@ -410,7 +490,14 @@ struct ETAPIClient {
     func ensureInbox() async throws -> String {
         let s = AppSettings.shared
         if !s.inboxNoteId.isEmpty {
-            if (try? await getNote(s.inboxNoteId)) != nil { return s.inboxNoteId }
+            do {
+                _ = try await getNote(s.inboxNoteId)
+                return s.inboxNoteId
+            } catch {
+                // 记下的收件箱 id 失效（被删/换库）→ 清掉重新找，别一直 404
+                AppLogger.shared.log("收件箱：缓存 id \(s.inboxNoteId) 不可用（\(error.localizedDescription)），重新查找")
+                s.inboxNoteId = ""
+            }
         }
         // 用参数化 childNotes 一次拉 root 直接子笔记，找标题匹配的收件箱
         let children = try await childNotes(of: "root")

@@ -48,23 +48,34 @@
 ## 三、本工程结构（D:\trilium-mobile）
 
 ```
-ios-app/                      SwiftUI 工程（原生 App）
+ios-app/                      SwiftUI 工程（原生 App，约 5000 行）
   TriliumMobile/
     TriliumMobileApp.swift    入口（@main）
     Core/AppConfig.swift      默认服务器地址/收件箱标题/仓库名
-    Core/AppSettings.swift    服务器+token 持久化（UserDefaults）
-    Core/ETAPIClient.swift    ETAPI 客户端（原生 URLSession）
-    Core/UpdateChecker.swift  更新检测（抄巢记：并行查双源/下载/分享面板）
+    Core/AppSettings.swift    服务器+token+备用地址持久化（token 走 Keychain，见下）
+    Core/Keychain.swift       token 存 Keychain（失败自动回退 UserDefaults）
+    Core/ETAPIClient.swift    ETAPI 客户端（原生 URLSession）+ 错误/解析诊断日志
+    Core/NoteCache.swift      列表/正文/附件缓存（Caches 目录）+ 离线写入队列
+    Core/UpdateChecker.swift  更新检测（并行查双源 / 后台 URLSession 下载 / 系统分享面板）
+    Core/AppLogger.swift      诊断日志（内存 + UserDefaults，最多 200 条，设置页可看/复制）
     Models/Note.swift         笔记数据模型
-    Views/RootView.swift      登录门禁 + 4 Tab 容器
-    Views/LoginView.swift     服务器+密码登录
-    Views/RecentView.swift    最近笔记流 + 速记条
-    Views/TreeView.swift      面包屑树浏览
-    Views/SearchView.swift    全文搜索
-    Views/SettingsView.swift  连接/退出/检查更新
-    Views/EditorView.swift    WKWebView 加载服务端编辑器
+    Views/RootView.swift      登录门禁 + 外壳容器（Tab 切换/抽屉/浮层都在这层）
+    Views/LoginView.swift     服务器+密码登录（含证书/网络错误的中文提示）
+    Views/NoteListView.swift  最近/收藏列表 + 搜索 + 速记 + 整理菜单
+                              （内含 NoteIconBadge / NoteRow / ComposeView，949 行）
+    Views/NoteDetailView.swift 阅读页 + 原生编辑器 + WKWebView
+                              （内含 NativeEditorView / ContentWebView / WebEditorView /
+                                FullWebView / ZoomableImageView / ShareSheet，1142 行）
+    Views/TreeView.swift      目录树（递归折叠 + 展开状态持久化）
+    Views/MoveTargetPicker.swift 移动/克隆的目标目录选择器
+    Views/QuickLookView.swift 附件预览（QuickLook）
+    Views/SettingsView.swift  连接/缓存/日志/检查更新/退出
+    Views/UpdateView.swift    更新下载页（常驻进度）
+    Resources/mermaid.min.js  Mermaid 渲染（注入阅读页）
     Info.plist                含 LSApplicationQueriesSchemes:apple-magnifier + ATS 放行 http
+    TriliumMobile.entitlements 空（ad-hoc 签名）
     Assets.xcassets/          App 图标 + logo.svg
+  ShareExtension/             分享扩展（Safari/微信存收件箱）
   gen_pbxproj.py              生成 .xcodeproj（Windows 上跑，增删 Swift 文件重跑同步）
   TriliumMobile.xcodeproj/    生成的工程文件（进 git）
 .github/workflows/build-native-ios.yml  云端出包：生成工程 → 注入版本 → sharp 图标 → xcodebuild → 打包 IPA → 发版
@@ -92,7 +103,12 @@ public/logo.svg              已迁移到 ios-app/TriliumMobile/Assets.xcassets/
 - `GET /etapi/app-info`（含 appVersion）
 - `GET /etapi/notes/{id}` → 含 `childNoteIds`、`parentBranchIds`；`GET/PUT /etapi/notes/{id}/content`
 - `PATCH /etapi/notes/{id}`（title 等）；`POST /etapi/notes {parentNoteId,title,type,mime,content}`
-- `GET /etapi/search-notes?search=...`（Trilium 搜索语法，`order by dateModified desc limit N` 可用）
+- `GET /etapi/notes?search=...` —— ⚠️ **v0.106 没有 `/etapi/search-notes`**（旧版本文档写错过，导致列表永久空白）
+  - `search` **必须非空**（空串 400 `'search' query parameter is mandatory`）；「匹配全部」写
+    `note.noteId != 'zzz_no_match_zzz'`
+  - 排序/分页走**独立参数**：`orderBy=dateModified&orderDirection=desc&limit=30`，
+    **不能**把 `order by dateModified desc limit 30` 塞进 search（会被当全文词 → 永远搜不到）
+  - 搜索响应**不含** `childNoteIds` / `parentNoteIds`（要建树必须逐条 `GET /etapi/notes/{id}` 补）
 - text 笔记的 content 是 HTML 字符串；冲突策略 v1 = 最后保存为准
 
 ## 五、已完成 / 下一步

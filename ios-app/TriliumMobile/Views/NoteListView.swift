@@ -526,8 +526,8 @@ struct NoteListView: View {
         loading = true
         loadGeneration += 1
         let gen = loadGeneration
+        let q = searchQuery.trimmingCharacters(in: .whitespaces) // 提到 do 外：catch 里也要用它记日志
         do {
-            let q = searchQuery.trimmingCharacters(in: .whitespaces)
             let result: [Note]
             if q.isEmpty {
                 switch browseMode {
@@ -549,11 +549,12 @@ struct NoteListView: View {
             errorMsg = ""
         } catch {
             guard gen == loadGeneration else { return }
-            AppLogger.shared.log("列表加载失败: \(error.localizedDescription)")
+            AppLogger.shared.log("列表加载失败（\(browseMode.title)/\(q.isEmpty ? "无关键词" : q)）: \(error.localizedDescription)")
             if browseMode == .recent,
                let cached = NoteCache.shared.loadRecentNotes(), !cached.isEmpty {
                 notes = cached
-                errorMsg = "离线模式（显示缓存）"
+                // 别只写「离线模式」：解析失败/证书问题也被归到这里，把原因带上才好排查
+                errorMsg = "显示缓存（\(error.localizedDescription)）"
             } else {
                 errorMsg = "加载失败：\(error.localizedDescription)"
             }
