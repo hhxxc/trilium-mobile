@@ -21,14 +21,14 @@ struct ComposeView: View {
                 // 顶部信息条：存到哪 + 字数
                 HStack(spacing: 6) {
                     Image(systemName: "tray.full").font(.system(size: 11))
-                    Text("存入 收件箱").font(.caption)
+                    Text("存入 收件箱").font(.footnote)
                     Spacer()
-                    Text("\(text.count) 字").font(.caption2)
+                    Text("\(text.count) 字").font(.footnote).monospacedDigit()
                 }
-                .foregroundColor(Color(UIColor.tertiaryLabel))
+                .foregroundColor(Color(UIColor.secondaryLabel))
                 .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, 10)
+                .padding(.vertical, 12)
+                Divider()
 
                 // 输入区：无边框多行输入 + 占位提示
                 ZStack(alignment: .topLeading) {
@@ -68,14 +68,17 @@ struct ComposeView: View {
                     Button {
                         save()
                     } label: {
-                        Text(busy ? "保存中…" : "保存")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 18)
-                            .frame(height: 36)
-                            .background(
-                                Capsule().fill(trimmed.isEmpty ? Color(UIColor.systemGray3) : accent)
-                            )
+                        HStack(spacing: 6) {
+                            if busy { ProgressView().scaleEffect(0.7).tint(.white) }
+                            Text(busy ? "保存中…" : "保存")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 22)
+                        .frame(height: 40)
+                        .background(
+                            Capsule().fill(trimmed.isEmpty ? Color(UIColor.systemGray3) : accent)
+                        )
                     }
                     .buttonStyle(.plain)
                     .disabled(busy || trimmed.isEmpty)
@@ -88,7 +91,11 @@ struct ComposeView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+                    Button("取消") {
+                        // 先收键盘再收面板：键盘和 sheet 同时收会互相抢动画，显得卡
+                        inputFocused = false
+                        dismiss()
+                    }
                 }
             }
             .onAppear {
