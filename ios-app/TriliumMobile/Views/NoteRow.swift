@@ -154,15 +154,21 @@ struct NoteRow: View {
         }
     }
 
+    /// 类型徽章配色：深色档统一提亮，否则在黑底上会发灰、分不清类型
     static func iconColor(for type: String) -> Color {
+        func c(_ lr: CGFloat, _ lg: CGFloat, _ lb: CGFloat,
+               _ dr: CGFloat, _ dg: CGFloat, _ db: CGFloat) -> Color {
+            Theme.adaptive(light: UIColor(red: lr, green: lg, blue: lb, alpha: 1),
+                           dark: UIColor(red: dr, green: dg, blue: db, alpha: 1))
+        }
         switch type {
-        case "code": return Color(red: 0.90, green: 0.49, blue: 0.13)      // 橙
-        case "image": return Color(red: 0.85, green: 0.35, blue: 0.55)     // 桃红
-        case "file": return Color(red: 0.20, green: 0.48, blue: 0.90)      // 蓝
-        case "book": return Color(red: 0.93, green: 0.63, blue: 0.14)      // 琥珀
-        case "render": return Color(red: 0.53, green: 0.40, blue: 0.85)    // 紫
-        case "mermaid": return Color(red: 0.33, green: 0.45, blue: 0.85)   // 靛
-        default: return Theme.accent          // 主题青
+        case "code": return c(0.90, 0.49, 0.13, 0.98, 0.60, 0.28)     // 橙
+        case "image": return c(0.85, 0.35, 0.55, 0.97, 0.56, 0.72)    // 桃红
+        case "file": return c(0.20, 0.48, 0.90, 0.42, 0.68, 0.99)     // 蓝
+        case "book": return c(0.93, 0.63, 0.14, 1.00, 0.78, 0.33)     // 琥珀
+        case "render": return c(0.53, 0.40, 0.85, 0.72, 0.60, 0.97)   // 紫
+        case "mermaid": return c(0.33, 0.45, 0.85, 0.58, 0.68, 0.99)  // 靛
+        default: return Theme.accent                                   // 主题青
         }
     }
 }

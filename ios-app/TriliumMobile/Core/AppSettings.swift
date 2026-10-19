@@ -1,5 +1,45 @@
 import Foundation
 import LocalAuthentication
+import SwiftUI
+import UIKit
+
+/// 外观模式（设置页三档）。
+/// ⚠️ 为什么需要「强制」档：阅读页正文是 WKWebView，它的 `prefers-color-scheme`
+/// 只看 **系统** 外观，不会管 App 自己想用什么 —— 所以强制档必须同时把
+/// `UIUserInterfaceStyle` 透传给 WebView（见 ContentWebView），否则界面黑了、正文还是白的。
+enum ThemeMode: Int, CaseIterable, Identifiable {
+    case system = 0
+    case light = 1
+    case dark = 2
+
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+
+    /// SwiftUI 的 preferredColorScheme：nil = 跟随系统
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+
+    /// UIKit / WKWebView 用：unspecified = 跟随系统
+    var uiStyle: UIUserInterfaceStyle {
+        switch self {
+        case .system: return .unspecified
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
 
 /// 服务器连接设置（服务器地址 + ETAPI token），持久化到 UserDefaults。
 final class AppSettings: ObservableObject {
@@ -13,8 +53,14 @@ final class AppSettings: ObservableObject {
         static let inboxTitle = "trilium.inboxTitle"
         static let readerFontScale = "trilium.readerFontScale"
         static let lockEnabled = "trilium.lockEnabled"
+        static let themeMode = "trilium.themeMode"
         /// 安装标记：UserDefaults 卸载即清，用来识别「重装」
         static let installMarker = "trilium.installed"
+    }
+
+    /// 外观：跟随系统 / 浅色 / 深色（默认跟随系统，与以前的行为一致）
+    @Published var themeMode: ThemeMode {
+        didSet { UserDefaults.standard.set(themeMode.rawValue, forKey: Keys.themeMode) }
     }
 
     /// 生物识别锁开关（FaceID/触控ID，失败回退设备密码；RootView 门禁）
@@ -91,6 +137,7 @@ final class AppSettings: ObservableObject {
         inboxTitle = d.string(forKey: Keys.inboxTitle) ?? AppConfig.defaultInboxTitle
         readerFontScale = d.object(forKey: Keys.readerFontScale) as? Double ?? 1.0
         lockEnabled = d.bool(forKey: Keys.lockEnabled)
+        themeMode = ThemeMode(rawValue: d.object(forKey: Keys.themeMode) as? Int ?? 0) ?? .system
         isLoggedIn = !savedToken.isEmpty  // 用局部变量，避免 init 里访问 self.token 的初始化顺序问题
     }
 

@@ -15,6 +15,10 @@ struct ContentWebView: UIViewRepresentable {
     var onOutline: (([OutlineItem]) -> Void)? = nil
     /// 跳转到大纲第 index 项（变化时驱动 evaluateJavaScript 滚动）
     var jumpToIndex: Int? = nil
+    /// ⚠️ 正文是网页：它的 `prefers-color-scheme` 只认 **UIKit 外观**，
+    ///    SwiftUI 的 preferredColorScheme 不会自动透传进来（界面黑了、正文还白）。
+    ///    靠这个环境变量把当前外观显式塞给 WKWebView。
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeCoordinator() -> Coordinator {
         Coordinator(noteId: noteId, onOpenNote: onOpenNote, onOutline: onOutline)
@@ -178,6 +182,8 @@ struct ContentWebView: UIViewRepresentable {
         wv.isOpaque = false
         wv.backgroundColor = .clear
         wv.scrollView.backgroundColor = .clear
+        // 外观透传（深色模式下正文 CSS 的 prefers-color-scheme 才会跟着变）
+        wv.overrideUserInterfaceStyle = (colorScheme == .dark) ? .dark : .light
         // 隐藏右侧竖向滚动指示条（用户嫌它像一根「进度条」挡内容）
         wv.scrollView.showsVerticalScrollIndicator = false
         wv.navigationDelegate = context.coordinator
@@ -188,6 +194,9 @@ struct ContentWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
+        // 外观切换（系统深色切换 / 设置里改档）→ 同步给网页，正文配色才跟得上
+        let style: UIUserInterfaceStyle = (colorScheme == .dark) ? .dark : .light
+        if uiView.overrideUserInterfaceStyle != style { uiView.overrideUserInterfaceStyle = style }
         // 跳转索引被重置为 nil 时（同一条目可重复点击）同步清记录
         if jumpToIndex == nil { context.coordinator.lastJump = nil }
         // 大纲跳转：索引变化时驱动 WebView 滚动到对应标题
@@ -253,17 +262,23 @@ struct WebEditorView: View {
 struct FullWebView: UIViewRepresentable {
     static let sharedProcessPool = WKProcessPool()
     let url: URL
+    /// 网页编辑器 / 服务端页面同样只认 UIKit 外观，必须显式透传
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.processPool = FullWebView.sharedProcessPool
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.allowsBackForwardNavigationGestures = true
+        wv.overrideUserInterfaceStyle = (colorScheme == .dark) ? .dark : .light
         wv.load(URLRequest(url: url))
         return wv
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        let style: UIUserInterfaceStyle = (colorScheme == .dark) ? .dark : .light
+        if uiView.overrideUserInterfaceStyle != style { uiView.overrideUserInterfaceStyle = style }
+    }
 }
 
 /// 图片查看：双指捏合缩放（1x~6x）+ 双击 1x/2x 切换；放大后可拖动平移，缩回 1x 自动复位

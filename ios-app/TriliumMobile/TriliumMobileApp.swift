@@ -56,6 +56,8 @@ struct TriliumMobileApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(settings)
+                // 外观三档：nil = 跟随系统。设在最外层才能连 sheet / UIKit 弹出层一起覆盖
+                .preferredColorScheme(settings.themeMode.colorScheme)
         }
     }
 }

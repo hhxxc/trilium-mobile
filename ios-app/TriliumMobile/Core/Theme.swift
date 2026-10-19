@@ -9,7 +9,17 @@ import UIKit
 /// 以后新增 UI 从这里取色，别再写魔法数字。
 enum Theme {
     /// 主题青（Trilium 品牌色）：图标徽标 / 胶囊激活态 / 主按钮 / 链接强调共用
-    static let accent = Color(red: 0.17, green: 0.61, blue: 0.56)
+    /// ⚠️ 动态色：深色底上原色偏暗、和次要文字对比度不够，深色档提亮一档
+    static let accent = Color(UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.36, green: 0.78, blue: 0.71, alpha: 1)
+            : UIColor(red: 0.17, green: 0.61, blue: 0.56, alpha: 1)
+    })
+
+    /// 深/浅两档取色（类型徽章这类固定色在深色下要提亮，否则糊成一片）
+    static func adaptive(light: UIColor, dark: UIColor) -> Color {
+        Color(UIColor { $0.userInterfaceStyle == .dark ? dark : light })
+    }
 
     /// 抽屉遮罩：暗色下加深，否则黑底上 0.28 的遮罩几乎看不出来
     static let scrim = Color(UIColor { trait in

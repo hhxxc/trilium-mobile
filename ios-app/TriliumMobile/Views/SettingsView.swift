@@ -68,6 +68,21 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("外观") {
+                    // ⚠️ 分段控件放 Form 内容区，不放 toolbar：iOS 15 下 toolbar 内的
+                    //    segmented Picker 不渲染（老坑，见 iOS 15 兼容红线）
+                    Picker("主题", selection: Binding(
+                        get: { settings.themeMode },
+                        set: { settings.themeMode = $0 })) {
+                        ForEach(ThemeMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    Text("正文是网页渲染的，切换后阅读页配色会同步；「跟随系统」按系统深色设置走")
+                        .font(.footnote).foregroundColor(.secondary)
+                }
+
                 Section("安全") {
                     if AppSettings.canAuthenticate {
                         Toggle("Face ID / 密码锁", isOn: $settings.lockEnabled)
