@@ -42,7 +42,7 @@ struct NoteRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(note.title.isEmpty ? "（无标题）" : note.title)
-                        .font(.callout.weight(.medium))
+                        .font(.headline)
                         .foregroundColor(.primary)
                         .lineLimit(1)
                     if note.isBookmarked {
@@ -54,7 +54,7 @@ struct NoteRow: View {
 
                 if !summary.isEmpty {
                     Text(summary)
-                        .font(.footnote)
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -62,9 +62,9 @@ struct NoteRow: View {
                 if showsLocation, !location.isEmpty {
                     HStack(spacing: 3) {
                         Image(systemName: "folder")
-                            .font(.system(size: 9))
+                            .font(.system(size: 11))
                         Text(location)
-                            .font(.caption2)
+                            .font(.footnote)
                             .lineLimit(1)
                     }
                     .foregroundColor(Color(UIColor.tertiaryLabel))
@@ -72,7 +72,7 @@ struct NoteRow: View {
 
                 if !note.friendlyModified.isEmpty {
                     Text(note.friendlyModified)
-                        .font(.caption2)
+                        .font(.footnote)
                         .foregroundColor(Color(UIColor.tertiaryLabel))
                 }
             }

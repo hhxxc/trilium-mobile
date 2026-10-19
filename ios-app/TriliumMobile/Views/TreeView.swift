@@ -236,7 +236,7 @@ struct TreeNodeView: View {
             NoteIconBadge(type: note.type, size: 26)
 
             Text(note.title.isEmpty ? "（无标题）" : note.title)
-                .font(.subheadline)
+                .font(.callout)
                 .foregroundColor(.primary)
                 .lineLimit(1)
 
