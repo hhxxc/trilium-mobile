@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 /// UserDefaults 键：搜索历史（集中管理，别散落硬编码字符串）
-private let searchHistoryKey = searchHistoryKey
+private let searchHistoryKey = "trilium.searchHistory"
 
 /// 首页浏览模式：最近 / 收藏 / 目录
 enum BrowseMode: Int, CaseIterable {
