@@ -17,6 +17,12 @@ enum Theme {
             ? UIColor.black.withAlphaComponent(0.50)
             : UIColor.black.withAlphaComponent(0.28)
     })
+
+    // MARK: 圆角刻度（统一从这里取，别散落 8/10/12/14 魔法数字）
+    static let radiusSmall: CGFloat = 8    // 芯片 / 小组件
+    static let radiusButton: CGFloat = 10  // 按钮
+    static let radiusCard: CGFloat = 12    // 卡片
+    static let radiusLarge: CGFloat = 14   // 大卡片
 }
 
 /// 隐藏宿主滚动视图的滚动指示条。

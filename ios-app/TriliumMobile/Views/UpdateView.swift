@@ -103,7 +103,7 @@ struct UpdateView: View {
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 40)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(accent))
+                    .background(RoundedRectangle(cornerRadius: Theme.radiusButton, style: .continuous).fill(accent))
             }
             .buttonStyle(.plain)
         }
@@ -116,7 +116,7 @@ struct UpdateView: View {
 
     private var headerCard: some View {
         HStack(spacing: 14) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Theme.radiusLarge, style: .continuous)
                 .fill(accent.opacity(0.14))
                 .frame(width: 54, height: 54)
                 .overlay(
@@ -196,7 +196,7 @@ struct UpdateView: View {
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 44)
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(accent))
+                    .background(RoundedRectangle(cornerRadius: Theme.radiusCard, style: .continuous).fill(accent))
                 }
                 .buttonStyle(.plain)
 
@@ -221,7 +221,7 @@ struct UpdateView: View {
                         .foregroundColor(.red)
                         .frame(maxWidth: .infinity)
                         .frame(height: 42)
-                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .background(RoundedRectangle(cornerRadius: Theme.radiusCard, style: .continuous)
                             .fill(Color(UIColor.secondarySystemGroupedBackground)))
                 }
                 .buttonStyle(.plain)
@@ -240,7 +240,7 @@ struct UpdateView: View {
                 .foregroundColor(accent)
                 .frame(maxWidth: .infinity)
                 .frame(height: 42)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .background(RoundedRectangle(cornerRadius: Theme.radiusCard, style: .continuous)
                     .fill(Color(UIColor.secondarySystemGroupedBackground)))
             }
             .buttonStyle(.plain)
@@ -266,7 +266,7 @@ struct UpdateView: View {
     }
 
     private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
+        RoundedRectangle(cornerRadius: Theme.radiusLarge, style: .continuous)
             .fill(Color(UIColor.secondarySystemGroupedBackground))
     }
 

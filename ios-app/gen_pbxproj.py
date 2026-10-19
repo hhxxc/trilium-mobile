@@ -39,6 +39,15 @@ EXT_SWIFT_FILES = sorted(
     if name.endswith(".swift")
 )
 
+# 单元测试源文件（独立 test target，纯函数测试，不打包进 App）
+_TEST_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TriliumMobileTests")
+TEST_SWIFT_FILES = sorted(
+    os.path.relpath(os.path.join(dp, name), _TEST_ROOT).replace("\\", "/")
+    for dp, _dirs, names in os.walk(_TEST_ROOT)
+    for name in names
+    if name.endswith(".swift")
+)
+
 INFOPLIST = "Info.plist"
 ASSET_CATALOG = "Assets.xcassets"
 
@@ -78,6 +87,18 @@ ext_appex_build_id = oid("BuildFile.TriliumShare.appex")
 ext_proxy_id = oid("ContainerItemProxy")
 ext_dep_id = oid("TargetDependency")
 
+# 单元测试 target
+test_target_id = oid("TestNativeTarget")
+test_product_id = oid("Product.TriliumMobileTests.xctest")
+test_sources_id = oid("TestSourcesBuildPhase")
+test_frameworks_id = oid("TestFrameworksBuildPhase")
+test_group_id = oid("TriliumMobileTestsGroup")
+test_cl_id = oid("TestTargetConfigList")
+test_dbg_id = oid("TestTargetDebug")
+test_rel_id = oid("TestTargetRelease")
+test_dep_id = oid("TestTargetDependency")
+test_proxy_id = oid("TestContainerItemProxy")
+
 file_ref_ids = {}
 build_file_ids = {}
 for f in SWIFT_FILES:
@@ -89,6 +110,12 @@ ext_build_file_ids = {}
 for f in EXT_SWIFT_FILES:
     ext_file_ref_ids[f] = oid("ExtFileRef." + f)
     ext_build_file_ids[f] = oid("ExtBuildFile." + f)
+
+test_file_ref_ids = {}
+test_build_file_ids = {}
+for f in TEST_SWIFT_FILES:
+    test_file_ref_ids[f] = oid("TestFileRef." + f)
+    test_build_file_ids[f] = oid("TestBuildFile." + f)
 
 res_ref_ids = {}
 res_build_ids = {}
@@ -124,6 +151,12 @@ for f in EXT_SWIFT_FILES:
 build_files_txt += (
     f'\t\t{ext_appex_build_id} /* TriliumShare.appex in Embed Foundation */ = {{isa = PBXBuildFile; fileRef = {ext_product_id} /* TriliumShare.appex */; settings = {{ATTRIBUTES = (RemoveHeadersOnCopy, ); }}; }};\n'
 )
+# 单元测试：源文件 BuildFile
+for f in TEST_SWIFT_FILES:
+    name = os.path.basename(f)
+    build_files_txt += (
+        f'\t\t{test_build_file_ids[f]} /* {name} in Sources */ = {{isa = PBXBuildFile; fileRef = {test_file_ref_ids[f]} /* {name} */; }};\n'
+    )
 
 # ---- PBXFileReference ----
 file_refs = []
@@ -149,8 +182,16 @@ for f in EXT_SWIFT_FILES:
     file_refs.append(
         f'\t\t{ext_file_ref_ids[f]} /* {name} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {f}; sourceTree = "<group>"; }};\n'
     )
+for f in TEST_SWIFT_FILES:
+    name = os.path.basename(f)
+    file_refs.append(
+        f'\t\t{test_file_ref_ids[f]} /* {name} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {f}; sourceTree = "<group>"; }};\n'
+    )
 file_refs.append(
     f'\t\t{ext_product_id} /* TriliumShare.appex */ = {{isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TriliumShare.appex; sourceTree = BUILT_PRODUCTS_DIR; }};\n'
+)
+file_refs.append(
+    f'\t\t{test_product_id} /* TriliumMobileTests.xctest */ = {{isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TriliumMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; }};\n'
 )
 file_refs_txt = "".join(file_refs)
 
@@ -182,19 +223,33 @@ ext_group = (
     f'\t\t\tsourceTree = "<group>";\n'
     f'\t\t}};\n'
 )
+test_group_children = ",\n".join(
+    f"\t\t\t\t{test_file_ref_ids[f]} /* {os.path.basename(f)} */" for f in TEST_SWIFT_FILES
+)
+test_group = (
+    f'\t\t{test_group_id} /* TriliumMobileTests */ = {{\n'
+    f'\t\t\tisa = PBXGroup;\n'
+    f'\t\t\tchildren = (\n{test_group_children},\n'
+    f'\t\t\t);\n'
+    f'\t\t\tpath = TriliumMobileTests;\n'
+    f'\t\t\tsourceTree = "<group>";\n'
+    f'\t\t}};\n'
+)
 main_group = (
     f'\t\t{main_group_id} = {{\n'
     f'\t\t\tisa = PBXGroup;\n'
     f'\t\t\tchildren = (\n'
     f'\t\t\t\t{app_group_id} /* TriliumMobile */,\n'
     f'\t\t\t\t{ext_group_id} /* ShareExtension */,\n'
+    f'\t\t\t\t{test_group_id} /* TriliumMobileTests */,\n'
     f'\t\t\t\t{product_id} /* TriliumMobile.app */,\n'
     f'\t\t\t\t{ext_product_id} /* TriliumShare.appex */,\n'
+    f'\t\t\t\t{test_product_id} /* TriliumMobileTests.xctest */,\n'
     f'\t\t\t);\n'
     f'\t\t\tsourceTree = "<group>";\n'
     f'\t\t}};\n'
 )
-groups_txt = app_group + ext_group + main_group
+groups_txt = app_group + ext_group + test_group + main_group
 
 # ---- PBXNativeTarget ----
 target_txt = (
@@ -239,6 +294,26 @@ ext_target_txt = (
     f'\t\t}};\n'
 )
 
+test_target_txt = (
+    f'\t\t{test_target_id} /* TriliumMobileTests */ = {{\n'
+    f'\t\t\tisa = PBXNativeTarget;\n'
+    f'\t\t\tbuildConfigurationList = {test_cl_id} /* Build configuration list for PBXNativeTarget "TriliumMobileTests" */;\n'
+    f'\t\t\tbuildPhases = (\n'
+    f'\t\t\t\t{test_sources_id} /* Sources */,\n'
+    f'\t\t\t\t{test_frameworks_id} /* Frameworks */,\n'
+    f'\t\t\t);\n'
+    f'\t\t\tbuildRules = (\n'
+    f'\t\t\t);\n'
+    f'\t\t\tdependencies = (\n'
+    f'\t\t\t\t{test_dep_id} /* PBXTargetDependency */,\n'
+    f'\t\t\t);\n'
+    f'\t\t\tname = TriliumMobileTests;\n'
+    f'\t\t\tproductName = TriliumMobileTests;\n'
+    f'\t\t\tproductReference = {test_product_id} /* TriliumMobileTests.xctest */;\n'
+    f'\t\t\tproductType = "com.apple.product-type.bundle.unit-test";\n'
+    f'\t\t}};\n'
+)
+
 # ---- PBXProject ----
 project_txt = (
     f'\t\t{project_id} /* Project object */ = {{\n'
@@ -271,6 +346,7 @@ project_txt = (
     f'\t\t\ttargets = (\n'
     f'\t\t\t\t{target_id} /* TriliumMobile */,\n'
     f'\t\t\t\t{ext_target_id} /* ShareExtension */,\n'
+    f'\t\t\t\t{test_target_id} /* TriliumMobileTests */,\n'
     f'\t\t\t);\n'
     f'\t\t}};\n'
 )
@@ -302,6 +378,19 @@ ext_sources_txt = (
     f'\t\t}};\n'
 )
 
+test_sources_children = ",\n".join(
+    f"\t\t\t\t{test_build_file_ids[f]} /* {os.path.basename(f)} in Sources */" for f in TEST_SWIFT_FILES
+)
+test_sources_txt = (
+    f'\t\t{test_sources_id} /* Sources */ = {{\n'
+    f'\t\t\tisa = PBXSourcesBuildPhase;\n'
+    f'\t\t\tbuildActionMask = 2147483647;\n'
+    f'\t\t\tfiles = (\n{test_sources_children},\n'
+    f'\t\t\t);\n'
+    f'\t\t\trunOnlyForDeploymentPostprocessing = 0;\n'
+    f'\t\t}};\n'
+)
+
 # Embed Foundation：把 .appex 塞进宿主 App（PlugIns/）
 embed_txt = (
     f'\t\t{embed_id} /* Embed Foundation */ = {{\n'
@@ -320,6 +409,15 @@ embed_txt = (
 # ---- Frameworks / Resources ----
 frameworks_txt = (
     f'\t\t{frameworks_id} /* Frameworks */ = {{\n'
+    f'\t\t\tisa = PBXFrameworksBuildPhase;\n'
+    f'\t\t\tbuildActionMask = 2147483647;\n'
+    f'\t\t\tfiles = (\n'
+    f'\t\t\t);\n'
+    f'\t\t\trunOnlyForDeploymentPostprocessing = 0;\n'
+    f'\t\t}};\n'
+)
+test_frameworks_txt = (
+    f'\t\t{test_frameworks_id} /* Frameworks */ = {{\n'
     f'\t\t\tisa = PBXFrameworksBuildPhase;\n'
     f'\t\t\tbuildActionMask = 2147483647;\n'
     f'\t\t\tfiles = (\n'
@@ -508,6 +606,59 @@ ext_tgt_release = (
 )
 configs_txt += ext_tgt_debug + ext_tgt_release
 
+# 单元测试 target 配置（host 是 TriliumMobile.app；无 entitlements）
+test_tgt_debug = (
+    f'\t\t{test_dbg_id} /* Debug */ = {{\n'
+    f'\t\t\tisa = XCBuildConfiguration;\n'
+    f'\t\t\tbuildSettings = {{\n'
+    f'\t\t\t\tBUNDLE_LOADER = "$(TEST_HOST)";\n'
+    f'\t\t\t\tCODE_SIGN_STYLE = Automatic;\n'
+    f'\t\t\t\tCURRENT_PROJECT_VERSION = 1;\n'
+    f'\t\t\t\tDEVELOPMENT_TEAM = "";\n'
+    f'\t\t\t\tGENERATE_INFOPLIST_FILE = YES;\n'
+    f'\t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 15.1;\n'
+    f'\t\t\t\tLD_RUNPATH_SEARCH_PATHS = (\n'
+    f'\t\t\t\t\t"$(inherited)",\n'
+    f'\t\t\t\t\t"@executable_path/Frameworks",\n'
+    f'\t\t\t\t\t"@loader_path/Frameworks",\n'
+    f'\t\t\t\t);\n'
+    f'\t\t\t\tMARKETING_VERSION = 1.0.0;\n'
+    f'\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.hhxxc.trilium.tests;\n'
+    f'\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";\n'
+    f'\t\t\t\tSWIFT_VERSION = 5.0;\n'
+    f'\t\t\t\tTARGETED_DEVICE_FAMILY = "1,2";\n'
+    f'\t\t\t\tTEST_HOST = "$(BUILT_PRODUCTS_DIR)/TriliumMobile.app/TriliumMobile";\n'
+    f'\t\t\t}};\n'
+    f'\t\t\tname = Debug;\n'
+    f'\t\t}};\n'
+)
+test_tgt_release = (
+    f'\t\t{test_rel_id} /* Release */ = {{\n'
+    f'\t\t\tisa = XCBuildConfiguration;\n'
+    f'\t\t\tbuildSettings = {{\n'
+    f'\t\t\t\tBUNDLE_LOADER = "$(TEST_HOST)";\n'
+    f'\t\t\t\tCODE_SIGN_STYLE = Automatic;\n'
+    f'\t\t\t\tCURRENT_PROJECT_VERSION = 1;\n'
+    f'\t\t\t\tDEVELOPMENT_TEAM = "";\n'
+    f'\t\t\t\tGENERATE_INFOPLIST_FILE = YES;\n'
+    f'\t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 15.1;\n'
+    f'\t\t\t\tLD_RUNPATH_SEARCH_PATHS = (\n'
+    f'\t\t\t\t\t"$(inherited)",\n'
+    f'\t\t\t\t\t"@executable_path/Frameworks",\n'
+    f'\t\t\t\t\t"@loader_path/Frameworks",\n'
+    f'\t\t\t\t);\n'
+    f'\t\t\t\tMARKETING_VERSION = 1.0.0;\n'
+    f'\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.hhxxc.trilium.tests;\n'
+    f'\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";\n'
+    f'\t\t\t\tSWIFT_VERSION = 5.0;\n'
+    f'\t\t\t\tTARGETED_DEVICE_FAMILY = "1,2";\n'
+    f'\t\t\t\tTEST_HOST = "$(BUILT_PRODUCTS_DIR)/TriliumMobile.app/TriliumMobile";\n'
+    f'\t\t\t}};\n'
+    f'\t\t\tname = Release;\n'
+    f'\t\t}};\n'
+)
+configs_txt += test_tgt_debug + test_tgt_release
+
 # ---- XCConfigurationList ----
 lists_txt = (
     f'\t\t{proj_cl_id} /* Build configuration list for PBXProject "TriliumMobile" */ = {{\n'
@@ -537,6 +688,15 @@ lists_txt = (
     f'\t\t\tdefaultConfigurationIsVisible = 0;\n'
     f'\t\t\tdefaultConfigurationName = Release;\n'
     f'\t\t}};\n'
+    f'\t\t{test_cl_id} /* Build configuration list for PBXNativeTarget "TriliumMobileTests" */ = {{\n'
+    f'\t\t\tisa = XCConfigurationList;\n'
+    f'\t\t\tbuildConfigurations = (\n'
+    f'\t\t\t\t{test_dbg_id} /* Debug */,\n'
+    f'\t\t\t\t{test_rel_id} /* Release */,\n'
+    f'\t\t\t);\n'
+    f'\t\t\tdefaultConfigurationIsVisible = 0;\n'
+    f'\t\t\tdefaultConfigurationName = Release;\n'
+    f'\t\t}};\n'
 )
 
 pbxproj = (
@@ -558,6 +718,13 @@ pbxproj = (
     f'\t\t\tremoteGlobalIDString = {ext_target_id};\n'
     f'\t\t\tremoteInfo = ShareExtension;\n'
     f'\t\t}};\n'
+    f'\t\t{test_proxy_id} /* PBXContainerItemProxy */ = {{\n'
+    f'\t\t\tisa = PBXContainerItemProxy;\n'
+    f'\t\t\tcontainerPortal = {project_id} /* Project object */;\n'
+    f'\t\t\tproxyType = 1;\n'
+    f'\t\t\tremoteGlobalIDString = {target_id};\n'
+    f'\t\t\tremoteInfo = TriliumMobile;\n'
+    f'\t\t}};\n'
     '/* End PBXContainerItemProxy section */\n\n'
     '/* Begin PBXCopyFilesBuildPhase section */\n'
     f'{embed_txt}'
@@ -567,6 +734,7 @@ pbxproj = (
     '/* End PBXFileReference section */\n\n'
     '/* Begin PBXFrameworksBuildPhase section */\n'
     f'{frameworks_txt}'
+    f'{test_frameworks_txt}'
     '/* End PBXFrameworksBuildPhase section */\n\n'
     '/* Begin PBXGroup section */\n'
     f'{groups_txt}'
@@ -574,6 +742,7 @@ pbxproj = (
     '/* Begin PBXNativeTarget section */\n'
     f'{target_txt}'
     f'{ext_target_txt}'
+    f'{test_target_txt}'
     '/* End PBXNativeTarget section */\n\n'
     '/* Begin PBXProject section */\n'
     f'{project_txt}'
@@ -585,12 +754,18 @@ pbxproj = (
     '/* Begin PBXSourcesBuildPhase section */\n'
     f'{sources_txt}'
     f'{ext_sources_txt}'
+    f'{test_sources_txt}'
     '/* End PBXSourcesBuildPhase section */\n\n'
     '/* Begin PBXTargetDependency section */\n'
     f'\t\t{ext_dep_id} /* PBXTargetDependency */ = {{\n'
     f'\t\t\tisa = PBXTargetDependency;\n'
     f'\t\t\ttarget = {ext_target_id} /* ShareExtension */;\n'
     f'\t\t\ttargetProxy = {ext_proxy_id} /* PBXContainerItemProxy */;\n'
+    f'\t\t}};\n'
+    f'\t\t{test_dep_id} /* PBXTargetDependency */ = {{\n'
+    f'\t\t\tisa = PBXTargetDependency;\n'
+    f'\t\t\ttarget = {target_id} /* TriliumMobile */;\n'
+    f'\t\t\ttargetProxy = {test_proxy_id} /* PBXContainerItemProxy */;\n'
     f'\t\t}};\n'
     '/* End PBXTargetDependency section */\n\n'
     '/* Begin XCBuildConfiguration section */\n'

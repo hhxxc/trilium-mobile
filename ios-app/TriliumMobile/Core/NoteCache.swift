@@ -22,6 +22,10 @@ final class NoteCache {
         try? fm.createDirectory(at: blobDir, withIntermediateDirectories: true)
     }
 
+    /// 缓存总容量上限。一条 25MB 的 PDF 附件不淘汰会无限堆满 Caches，
+    /// 超出后按最后修改时间从最旧的文件开始删。
+    private static let maxCacheBytes: Int64 = 200 * 1024 * 1024
+
     // MARK: - 元数据
 
     private var metaURL: URL { root.appendingPathComponent("notes.json") }
@@ -48,6 +52,7 @@ final class NoteCache {
         try? text.write(to: contentURL(noteId), atomically: true, encoding: .utf8)
         // 内容变了，列表摘要缓存要失效（否则编辑器改完回列表还是旧摘要）
         summaryCache.removeObject(forKey: noteId as NSString)
+        pruneIfNeeded()
     }
 
     func loadContent(_ noteId: String) -> String? {
@@ -76,6 +81,44 @@ final class NoteCache {
 
     func saveBlob(_ noteId: String, data: Data) {
         try? data.write(to: blobURL(noteId))
+        pruneIfNeeded()
+    }
+
+    /// 超出容量上限时，把 content 和 blob 里最旧的文件删掉，直到回到阈值以下。
+    /// 只在写入后调用；文件量小（几十条笔记 + 少量附件），枚举开销可忽略。
+    private func pruneIfNeeded() {
+        let max = Self.maxCacheBytes
+        guard max > 0 else { return }
+        var files: [(url: URL, size: Int64, date: Date)] = []
+        var total: Int64 = 0
+        for dir in [contentDir, blobDir] {
+            guard let e = fm.enumerator(at: dir,
+                                        includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { continue }
+            for case let url as URL in e {
+                let vals = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                let size = Int64(vals?.fileSize ?? 0)
+                let date = vals?.contentModificationDate ?? .distantPast
+                total += size
+                files.append((url, size, date))
+            }
+        }
+        guard total > max else { return }
+        files.sort { $0.date < $1.date } // 最旧在前
+        var remaining = total
+        var removed: Int64 = 0
+        for f in files {
+            guard remaining > max else { break }
+            do {
+                try fm.removeItem(at: f.url)
+                remaining -= f.size
+                removed += f.size
+            } catch {
+                AppLogger.shared.log("缓存淘汰删除失败 \(f.url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        if removed > 0 {
+            AppLogger.shared.log("缓存淘汰：清理 \(removed / 1024 / 1024)MB（总量 \(total / 1024 / 1024)MB > \(max / 1024 / 1024)MB）")
+        }
     }
 
     func loadBlob(_ noteId: String) -> Data? {
@@ -111,7 +154,7 @@ final class NoteCache {
         summaryCache.removeAllObjects()
         // 缓存清了，待同步操作必须保留（是真实数据不是缓存）
         if !pendingOps.isEmpty {
-            UserDefaults.standard.set(try? JSONEncoder().encode(pendingOps), forKey: "trilium.pendingOps")
+            UserDefaults.standard.set(try? JSONEncoder().encode(pendingOps), forKey: Self.pendingKey)
         }
     }
 }

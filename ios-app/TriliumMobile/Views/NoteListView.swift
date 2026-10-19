@@ -1,6 +1,9 @@
 import SwiftUI
 import UIKit
 
+/// UserDefaults 键：搜索历史（集中管理，别散落硬编码字符串）
+private let searchHistoryKey = searchHistoryKey
+
 /// 首页浏览模式：最近 / 收藏 / 目录
 enum BrowseMode: Int, CaseIterable {
     case recent = 0
@@ -157,7 +160,7 @@ struct NoteListView: View {
         }
         .refreshable { await load() }
         .onAppear {
-            searchHistory = UserDefaults.standard.stringArray(forKey: "trilium.searchHistory") ?? []
+            searchHistory = UserDefaults.standard.stringArray(forKey: searchHistoryKey) ?? []
             pendingCount = NoteCache.shared.pendingOps.count
         }
         // 搜索框在导航栏里（层级高于遮罩，压不住）：抽屉开着时一旦开始输入就顺手收回，
@@ -219,11 +222,31 @@ struct NoteListView: View {
 
     // MARK: - 列表
 
+    /// 加载骨架：几条灰条占位，比「加载中…」转圈更直观（列表数据未回来时展示）
+    private var skeletonList: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(0..<7, id: \.self) { _ in
+                VStack(alignment: .leading, spacing: 7) {
+                    RoundedRectangle(cornerRadius: Theme.radiusSmall)
+                        .fill(Color(UIColor.secondarySystemFill))
+                        .frame(width: 170, height: 16)
+                    RoundedRectangle(cornerRadius: Theme.radiusSmall)
+                        .fill(Color(UIColor.secondarySystemFill))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 12)
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .redacted(reason: .placeholder)
+    }
+
     @ViewBuilder
     private var content: some View {
         if loading && notes.isEmpty {
-            ProgressView("加载中…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            skeletonList
         } else if !errorMsg.isEmpty && notes.isEmpty {
             VStack(spacing: 12) {
                 Image(systemName: "wifi.exclamationmark")
@@ -628,11 +651,11 @@ struct NoteListView: View {
 
     /// 记录搜索历史：去重置顶、最多 8 条、UserDefaults 持久化
     private func recordSearch(_ term: String) {
-        var list = UserDefaults.standard.stringArray(forKey: "trilium.searchHistory") ?? []
+        var list = UserDefaults.standard.stringArray(forKey: searchHistoryKey) ?? []
         list.removeAll { $0 == term }
         list.insert(term, at: 0)
         if list.count > 8 { list = Array(list.prefix(8)) }
-        UserDefaults.standard.set(list, forKey: "trilium.searchHistory")
+        UserDefaults.standard.set(list, forKey: searchHistoryKey)
         searchHistory = list
     }
 
@@ -702,342 +725,5 @@ struct NoteListView: View {
                 withAnimation(.easeIn(duration: 0.2)) { toast = nil }
             }
         }
-    }
-}
-
-/// 笔记类型图标徽标：圆角方块底色 + 同色系符号。
-/// 旧版是裸 SF Symbol，花花绿绿又不成块，视觉上像「贴纸」；加个浅色底后图标成组、辨识度也高。
-struct NoteIconBadge: View {
-    let type: String
-    var size: CGFloat = 30
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.29, style: .continuous)
-            .fill(NoteRow.iconColor(for: type).opacity(0.14))
-            .frame(width: size, height: size)
-            .overlay(
-                Image(systemName: NoteRow.icon(for: type))
-                    .font(.system(size: size * 0.46, weight: .semibold))
-                    .foregroundColor(NoteRow.iconColor(for: type))
-            )
-    }
-}
-
-/// 笔记列表行：图标徽标 + 标题 + 正文摘要 + 修改时间 + 收藏星标
-struct NoteRow: View {
-    let note: Note
-    /// 搜索/收藏里传 true：多显示一行「所在目录」，用来区分同名笔记
-    var showsLocation: Bool = false
-
-    @State private var summary: String = ""
-    @State private var location: String = ""
-
-    init(note: Note, showsLocation: Bool = false) {
-        self.note = note
-        self.showsLocation = showsLocation
-        _location = State(initialValue: NotePathResolver.cachedParentTitle(for: note) ?? "")
-    }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            NoteIconBadge(type: note.type, size: 30)
-                .padding(.top, 1)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(note.title.isEmpty ? "（无标题）" : note.title)
-                        .font(.callout.weight(.medium))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    if note.isBookmarked {
-                        Image(systemName: "star.fill")
-                            .font(.system(size: 10))
-                            .foregroundColor(.orange)
-                    }
-                }
-
-                if !summary.isEmpty {
-                    Text(summary)
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-
-                if showsLocation, !location.isEmpty {
-                    HStack(spacing: 3) {
-                        Image(systemName: "folder")
-                            .font(.system(size: 9))
-                        Text(location)
-                            .font(.caption2)
-                            .lineLimit(1)
-                    }
-                    .foregroundColor(Color(UIColor.tertiaryLabel))
-                }
-
-                if !note.friendlyModified.isEmpty {
-                    Text(note.friendlyModified)
-                        .font(.caption2)
-                        .foregroundColor(Color(UIColor.tertiaryLabel))
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 7)
-        // 分隔线从标题文字左边起（图标 30 + 间距 12 = 42），比系统分隔线整齐
-        .overlay(alignment: .bottomLeading) {
-            Rectangle()
-                .fill(Color(UIColor.separator))
-                .frame(height: 0.5)
-                .padding(.leading, 42)
-        }
-        .onAppear {
-            Task {
-                await loadSummaryIfNeeded()
-                if showsLocation, location.isEmpty {
-                    location = await NotePathResolver.parentTitle(for: note) ?? ""
-                }
-            }
-        }
-    }
-
-    private func loadSummaryIfNeeded() async {
-        guard summary.isEmpty else { return }
-        // 图片/附件类给类型说明（正文是二进制，没有文字摘要）
-        switch note.type {
-        case "image":
-            summary = "图片"
-            return
-        case "file":
-            summary = "附件" + (note.mime.map { " · \($0)" } ?? "")
-            return
-        default: break
-        }
-        // 内存缓存命中（滚动回来不用再读盘）
-        if let cached = NoteCache.shared.cachedSummary(note.noteId) {
-            summary = cached
-            return
-        }
-        // 磁盘读取放后台：原来是 onAppear 里同步读，长列表滚动会掉帧
-        let noteId = note.noteId
-        let text: String? = await Task.detached(priority: .utility) {
-            guard let html = NoteCache.shared.loadContent(noteId), !html.isEmpty else { return nil }
-            let plain = NoteRow.plainText(from: html)
-            return plain.isEmpty ? nil : String(plain.prefix(70))
-        }.value
-        guard let text, !text.isEmpty else { return }
-        NoteCache.shared.storeSummary(noteId, text)
-        summary = text
-    }
-
-    /// HTML → 纯文本（去标签、解常见实体、压空白）
-    /// nonisolated：这个方法要在后台线程（Task.detached）里跑，不能挂 MainActor
-    nonisolated static func plainText(from html: String) -> String {
-        var s = html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-        let entities: [(String, String)] = [
-            ("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
-            ("&quot;", "\""), ("&#39;", "'"), ("&ldquo;", "「"), ("&rdquo;", "」")
-        ]
-        for (k, v) in entities { s = s.replacingOccurrences(of: k, with: v) }
-        s = s.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        return s.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    static func icon(for type: String) -> String {
-        switch type {
-        case "code": return "curlybraces"
-        case "image": return "photo.fill"
-        case "file": return "paperclip"
-        case "render": return "doc.richtext"
-        case "mermaid": return "chart.bar.doc.horizontal"
-        case "webView": return "globe"
-        case "book": return "book.closed.fill"
-        case "search": return "magnifyingglass"
-        case "noteMap", "relationMap": return "circle.grid.cross"
-        case "canvas": return "scribble"
-        default: return "doc.text.fill"
-        }
-    }
-
-    static func iconColor(for type: String) -> Color {
-        switch type {
-        case "code": return Color(red: 0.90, green: 0.49, blue: 0.13)      // 橙
-        case "image": return Color(red: 0.85, green: 0.35, blue: 0.55)     // 桃红
-        case "file": return Color(red: 0.20, green: 0.48, blue: 0.90)      // 蓝
-        case "book": return Color(red: 0.93, green: 0.63, blue: 0.14)      // 琥珀
-        case "render": return Color(red: 0.53, green: 0.40, blue: 0.85)    // 紫
-        case "mermaid": return Color(red: 0.33, green: 0.45, blue: 0.85)   // 靛
-        default: return Theme.accent          // 主题青
-        }
-    }
-}
-
-/// 速记 / 新建笔记：整块输入区，第一行自动作为标题（学苹果备忘录与 flomo 的零摩擦输入）。
-/// 旧版是「圆角输入框 + 两个导航按钮」，所以看着「粗」。
-struct ComposeView: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var text = ""
-    @State private var noteType = "text"
-    @State private var busy = false
-    @State private var errorMsg = ""
-    @FocusState private var inputFocused: Bool
-    var onSaved: () async -> Void
-
-    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private let accent = Theme.accent
-
-    var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                // 顶部信息条：存到哪 + 字数
-                HStack(spacing: 6) {
-                    Image(systemName: "tray.full").font(.system(size: 11))
-                    Text("存入 收件箱").font(.caption)
-                    Spacer()
-                    Text("\(text.count) 字").font(.caption2)
-                }
-                .foregroundColor(Color(UIColor.tertiaryLabel))
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, 10)
-
-                // 输入区：无边框多行输入 + 占位提示
-                ZStack(alignment: .topLeading) {
-                    if text.isEmpty {
-                        Text("记点什么…\n第一行会作为标题")
-                            .font(.body)
-                            .lineSpacing(4)
-                            .foregroundColor(Color(UIColor.placeholderText))
-                            .padding(.top, 8)
-                            .padding(.leading, 5)
-                            .allowsHitTesting(false)
-                    }
-                    TextEditor(text: $text)
-                        .font(.body)
-                        .lineSpacing(4)
-                        .focused($inputFocused)
-                        // 抵消 TextEditor 自带的 5pt 内边距，让文字和顶部提示条对齐
-                        .padding(.horizontal, -5)
-                        .padding(.vertical, -6)
-                }
-                .padding(.horizontal, 18)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-                if !errorMsg.isEmpty {
-                    Text(errorMsg)
-                        .font(.footnote).foregroundColor(.red)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 6)
-                }
-
-                Divider()
-                // 底部：类型选择（文本/代码）+ 保存
-                HStack(spacing: 8) {
-                    typeChip("text", "文本", "doc.text")
-                    typeChip("code", "代码", "curlybraces")
-                    Spacer()
-                    Button {
-                        save()
-                    } label: {
-                        Text(busy ? "保存中…" : "保存")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 18)
-                            .frame(height: 36)
-                            .background(
-                                Capsule().fill(trimmed.isEmpty ? Color(UIColor.systemGray3) : accent)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(busy || trimmed.isEmpty)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-            }
-            .background(Color(UIColor.systemBackground))
-            .navigationTitle("新建笔记")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                }
-            }
-            .onAppear {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { inputFocused = true }
-            }
-        }
-    }
-
-    private func typeChip(_ type: String, _ label: String, _ icon: String) -> some View {
-        let active = noteType == type
-        return Button {
-            noteType = type
-            UISelectionFeedbackGenerator().selectionChanged()
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: icon).font(.system(size: 11, weight: .semibold))
-                Text(label).font(.footnote.weight(active ? .semibold : .regular))
-            }
-            .foregroundColor(active ? accent : Color.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(active ? accent.opacity(0.12) : Color(UIColor.secondarySystemBackground))
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// 首行 = 标题，其余 = 正文（正文按空行切段落包 <p>）
-    private func save() {
-        let raw = text
-        guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let lines = raw.components(separatedBy: "\n")
-        var title = lines.first?.trimmingCharacters(in: .whitespaces) ?? ""
-        if title.isEmpty { title = "无标题" }
-        if title.count > 120 { title = String(title.prefix(120)) }
-        let body = lines.dropFirst().joined(separator: "\n")
-        let content = noteType == "code"
-            ? body.trimmingCharacters(in: .newlines)
-            : Self.html(fromPlain: body)
-
-        busy = true
-        Task {
-            do {
-                let inboxId = try await ETAPIClient.shared.ensureInbox()
-                _ = try await ETAPIClient.shared.createNote(
-                    parentNoteId: inboxId, title: title, content: content, type: noteType)
-            } catch {
-                // 断网/失败：入离线队列（队列模型只带标题，正文不入队）
-                NoteCache.shared.enqueue(PendingOp(kind: "create", id: UUID().uuidString,
-                    noteId: "", title: title, content: nil, parentNoteId: nil,
-                    createdAt: Date()))
-                AppLogger.shared.log("新建已入离线队列: \(title)")
-            }
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-            text = ""
-            await onSaved()
-            if !NoteCache.shared.pendingOps.isEmpty {
-                await NoteCache.shared.flushPendingOps()
-            }
-            busy = false
-            dismiss()
-        }
-    }
-
-    /// 纯文本 → Trilium 文本笔记的 HTML（空行分段，段内换行用 <br>）
-    static func html(fromPlain plain: String) -> String {
-        let paras = plain.components(separatedBy: "\n\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        if paras.isEmpty { return "" }
-        return paras.map { p in
-            let esc = p
-                .replacingOccurrences(of: "&", with: "&amp;")
-                .replacingOccurrences(of: "<", with: "&lt;")
-                .replacingOccurrences(of: ">", with: "&gt;")
-                .replacingOccurrences(of: "\n", with: "<br>")
-            return "<p>\(esc)</p>"
-        }.joined()
     }
 }

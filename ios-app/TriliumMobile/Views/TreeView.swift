@@ -39,7 +39,18 @@ struct TreeView: View {
     @ViewBuilder
     private var treeBody: some View {
         if loading {
-            ProgressView("加载目录…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(0..<8, id: \.self) { i in
+                    RoundedRectangle(cornerRadius: Theme.radiusSmall)
+                        .fill(Color(UIColor.secondarySystemFill))
+                        .frame(height: 15)
+                        .padding(.leading, CGFloat(10 + (i % 3) * 18))
+                        .padding(.trailing, 16)
+                }
+                Spacer()
+            }
+            .padding(.top, 8)
+            .redacted(reason: .placeholder)
         } else if !errorMsg.isEmpty {
             VStack(spacing: 12) {
                 Text(errorMsg).font(.footnote).foregroundColor(.secondary)
