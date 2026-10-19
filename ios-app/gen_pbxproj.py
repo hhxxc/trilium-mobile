@@ -458,6 +458,7 @@ proj_debug = (
     f'\t\t\t\tCLANG_ANALYZER_NONNULL = YES;\n'
     f'\t\t\t\tCOPY_PHASE_STRIP = NO;\n'
     f'\t\t\t\tENABLE_STRICT_OBJC_MSGSEND = YES;\n'
+    f'\t\t\t\tENABLE_TESTABILITY = YES;\n'
     f'\t\t\t\tGCC_C_LANGUAGE_STANDARD = gnu17;\n'
     f'\t\t\t\tGCC_OPTIMIZATION_LEVEL = 0;\n'
     f'\t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 15.1;\n'
