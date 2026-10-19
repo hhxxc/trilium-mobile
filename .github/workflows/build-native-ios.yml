@@ -180,3 +180,18 @@ jobs:
           gh release create "v$V" "ios-app/${{ env.IPA_NAME }}" \
             --title "Trilium Mobile v$V" \
             --notes "Trilium 手机伴侣端（SwiftUI 原生）v$V。用 TrollStore 打开 IPA 覆盖安装（同变体才会覆盖）。"
+
+      # 单元测试：纯函数测试（不碰网络/UI），跑在模拟器上。非阻塞——失败不拦 IPA 分发。
+      # 首次跑时若模拟器名/scheme 没对上，可看日志微调，不影响出包。
+      - name: Run unit tests (non-blocking)
+        continue-on-error: true
+        working-directory: ios-app
+        run: |
+          SIM=$(xcrun simctl list devices available | grep -E "iPhone" | head -1 | sed -E 's/^[[:space:]]+//; s/ *\(.*$//')
+          echo "==> 用模拟器: $SIM"
+          xcodebuild test \
+            -project TriliumMobile.xcodeproj \
+            -scheme TriliumMobile \
+            -destination "platform=iOS Simulator,name=$SIM,OS=latest" \
+            -derivedDataPath build/tests \
+            CODE_SIGNING_ALLOWED=NO
