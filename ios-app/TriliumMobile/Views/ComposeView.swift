@@ -92,9 +92,12 @@ struct ComposeView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") {
-                        // 先收键盘再收面板：键盘和 sheet 同时收会互相抢动画，显得卡
+                        // 先收键盘、等它收起动画走完再收面板：同一帧里两个动画会互相顶掉，
+                        // 导致面板「瞬移消失」（没动画）。错开一帧让两个动画各自走完。
                         inputFocused = false
-                        dismiss()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            dismiss()
+                        }
                     }
                 }
             }
