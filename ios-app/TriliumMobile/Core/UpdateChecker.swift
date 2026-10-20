@@ -630,6 +630,9 @@ final class UpdateCenter: NSObject, ObservableObject {
         phase = .downloading(received: 0, total: 0)
         persist()
         AppLogger.shared.log("开始下载 v\(version)，候选源 \(candidates.count) 个：\(candidates.map { $0.host ?? "?" }.joined(separator: " → "))")
+        // 闪退面包屑：日志实证出现过「开始下载 v1.6.9」之后再无「下载完成」、下次启动报闪退，
+        // 有这个 stage 就能直接断定是死在下载里，而不是死在别处
+        CrashBreadcrumb.markStage("下载 v\(version)")
         beginNextCandidate()
     }
 
@@ -852,6 +855,7 @@ extension UpdateCenter: URLSessionDownloadDelegate {
             return
         }
         AppLogger.shared.log("下载完成（\(channel.rawValue)）: v\(version) \(UpdateFileStore.size(of: dest)) 字节")
+        CrashBreadcrumb.markStage("下载完成 v\(version)（待安装）")
         DispatchQueue.main.async {
             self.candidateQueue.removeAll()
             self.currentURL = nil

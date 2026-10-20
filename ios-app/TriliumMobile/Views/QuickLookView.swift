@@ -12,8 +12,20 @@ final class QuickLookPresenter: NSObject, QLPreviewControllerDataSource {
     static let shared = QuickLookPresenter()
 
     private var url: URL?
+    private var lastKey: String = ""
+    private var lastPresentAt: Date = .distantPast
 
     func present(_ url: URL) {
+        // ⚠️ 防重复打开（2026-10-20 日志实证）：同一个文件在 1 秒内被 present 了两次，
+        //    中间还夹了一次根视图重建。重复 present 会叠两层 QuickLook，
+        //    用户关掉一层下面还有一层，也会白白多占一份内存（大 PDF 尤其明显）。
+        let key = url.absoluteString
+        if key == lastKey, Date().timeIntervalSince(lastPresentAt) < 2 {
+            AppLogger.shared.log("QuickLook 忽略重复打开: \(url.lastPathComponent)")
+            return
+        }
+        lastKey = key
+        lastPresentAt = Date()
         self.url = url
         let ql = QLPreviewController()
         ql.dataSource = self
@@ -23,6 +35,8 @@ final class QuickLookPresenter: NSObject, QLPreviewControllerDataSource {
         }
         top.present(ql, animated: true)
         AppLogger.shared.log("QuickLook 打开: \(url.lastPathComponent)")
+        // 闪退面包屑：预览大附件是内存压力最大的场景之一，死在这儿要能看出来
+        CrashBreadcrumb.markStage("预览附件 \(url.lastPathComponent)")
     }
 
     func numberOfPreviewItems(in controller: QLPreviewController) -> Int {

@@ -412,16 +412,26 @@ struct ETAPIClient {
     /// 两条都失败也不至于把收藏页做成永久空白。
     func bookmarkedNotes(limit: Int = 50) async throws -> [Note] {
         do {
-            let r = try await searchNotes("#bookmarked", limit: limit)
-            if !r.isEmpty { return r }
-            AppLogger.shared.log("收藏：标签搜索返回 0 条 → 走「最近 200 条按 attributes 过滤」兜底")
+            // ⚠️ 2026-10-20 修正（用户回传日志实证）：以前写 `if !r.isEmpty { return r }`，
+            //    于是**返回 0 条也会去走兜底** —— 但 0 条是合法结果（用户就是没收藏），
+            //    结果每次进收藏页都白打一个 limit=200 的全量请求（8 秒内打了 5 次）。
+            //    兜底只在主路径**出错**时才需要，0 条直接返回。
+            return try await searchNotes("#bookmarked", limit: limit)
         } catch {
             // 标签语法在个别版本不生效时会 400/解析失败，兜底继续，但必须留痕
             AppLogger.shared.log("收藏：标签搜索失败（\(error.localizedDescription)）→ 走兜底")
         }
         let recent = try await recentNotes(limit: 200)
+        // ⚠️ 兜底依赖搜索响应里带 attributes。已知搜索响应**不含** childNoteIds/parentNoteIds，
+        //    attributes 很可能同样缺失 → 一条都没有就别白忙活，直接留痕放弃，
+        //    否则只会打出「兜底命中 0/N」这种看起来像 bug 的噪音日志。
+        let withAttrs = recent.filter { $0.attributes != nil }
+        guard !withAttrs.isEmpty else {
+            AppLogger.shared.log("收藏：兜底不可用（\(recent.count) 条搜索结果全都不含 attributes）→ 放弃兜底")
+            return []
+        }
         let hits = recent.filter { $0.isBookmarked }
-        AppLogger.shared.log("收藏：兜底命中 \(hits.count)/\(recent.count) 条")
+        AppLogger.shared.log("收藏：兜底命中 \(hits.count)/\(recent.count) 条（其中 \(withAttrs.count) 条带 attributes）")
         return hits
     }
 

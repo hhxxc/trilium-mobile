@@ -54,9 +54,14 @@ struct RootView: View {
         }
         // 进后台立即上锁（锁屏/切走都算）；回前台弹认证 + 补交离线积压
         .onChange(of: scenePhase) { phase in
-            guard !validating else { return }
+            // ⚠️ 进后台的戳**不能**被 validating 挡掉：那时「进后台」是既成事实，
+            //    不打戳 → 下次启动一律误报「疑似闪退」（2026-10-20 修）。
+            //    validating 只挡「回前台弹认证」这类交互，不挡记录。
             if phase == .background {
                 CrashBreadcrumb.markBackground()
+            }
+            guard !validating else { return }
+            if phase == .background {
                 if settings.lockEnabled { isLocked = true }
             } else if phase == .active {
                 if settings.lockEnabled, isLocked { authenticate() }

@@ -20,19 +20,35 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 enum CrashBreadcrumb {
     private static let launchKey = "trilium.lastLaunchAt"
     private static let backgroundKey = "trilium.lastBackgroundAt"
+    private static let stageKey = "trilium.lastStage"
+
+    /// 在「重」节点记一笔当前在干什么（下载 / 预览附件 / 编辑…）。
+    /// ⚠️ 光有「疑似闪退」没用——不知道死在哪个阶段就只能瞎猜。
+    ///    2026-10-20 日志实证：一次死在下载 v1.6.9 中途（有「开始下载」无「下载完成」），
+    ///    一次死在打开 PDF 前后，靠 stage 下次就能直接说出来。
+    ///    只在关键节点调，别在列表加载这种高频路径上调（频繁写 UserDefaults 没意义）。
+    static func markStage(_ stage: String) {
+        UserDefaults.standard.set(stage, forKey: stageKey)
+    }
 
     static func markLaunch() {
         let d = UserDefaults.standard
         let prevLaunch = d.double(forKey: launchKey)
         let prevBackground = d.double(forKey: backgroundKey)
         if prevLaunch > 0, prevBackground < prevLaunch {
-            AppLogger.shared.log("⚠️ 上次会话未正常结束（疑似闪退）")
+            let stage = d.string(forKey: stageKey) ?? "未知"
+            let held = Int(Date().timeIntervalSince1970 - prevLaunch)
+            AppLogger.shared.log("⚠️ 上次会话未正常结束（疑似闪退），最后停留在：\(stage)（距上次启动 \(held)s）")
         }
         d.set(Date().timeIntervalSince1970, forKey: launchKey)
+        markStage("启动")
     }
 
     static func markBackground() {
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: backgroundKey)
+        // 留一条可见的日志：下次排查时能直接从日志里看出上次是**正常**退到后台的，
+        // 而不是只有个时间戳、还得去猜
+        AppLogger.shared.log("会话进入后台（正常结束标记，下次启动不会再报闪退）")
     }
 }
 

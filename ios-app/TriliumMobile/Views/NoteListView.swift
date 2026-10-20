@@ -79,12 +79,23 @@ struct NoteListView: View {
     @State private var searchTitleOnly = false
     @State private var searchByModified = false
 
+    /// 按 loadKey 缓存列表结果：切 tab 回来直接用，不再重打网络。
+    /// ⚠️ 2026-10-20 日志实证：8 秒内最近/目录/收藏同一批数据被拉了 5 次。
+    @State private var listCache: [String: [Note]] = [:]
+    /// 同一个 key 正在进行中的请求（并发去重：切 tab 手快时不会重复打网络，
+    /// 也不会因为上一个请求被 cancel 而让树/列表落占位）
+    @State private var inflight: [String: Task<[Note], Error>] = [:]
+
     private var isSearching: Bool {
         !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// 换模式 / 改搜索词都要重新取数
-    private var loadKey: String { "\(browseMode.rawValue)|\(searchQuery)" }
+    /// 换模式 / 改搜索词 / 改搜索范围或排序都要重新取数。
+    /// ⚠️ 范围与排序必须进 key：以前 key 只有「模式|关键词」，改排序后 key 不变，
+    ///    命中缓存就会**一直显示上一次的排序结果**（2026-10-20 加缓存时一并修）。
+    private var loadKey: String {
+        "\(browseMode.rawValue)|\(searchQuery)|\(searchTitleOnly ? 1 : 0)|\(searchByModified ? 1 : 0)"
+    }
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -161,7 +172,7 @@ struct NoteListView: View {
             guard !Task.isCancelled else { return }
             await load()
         }
-        .refreshable { await load() }
+        .refreshable { await reload() }
         .onAppear {
             searchHistory = UserDefaults.standard.stringArray(forKey: searchHistoryKey) ?? []
             refreshPendingBadge()
@@ -181,7 +192,7 @@ struct NoteListView: View {
         }
         // 编辑器改了标题：就地刷新列表，返回时看到的不是旧标题
         .onReceive(NotificationCenter.default.publisher(for: .noteMetaChanged)) { _ in
-            Task { await load() }
+            Task { await reload() }
         }
         // 从抽屉树点开笔记：导航已经把阅读页 push 上来了，抽屉必须同步收起
         .onReceive(NotificationCenter.default.publisher(for: .noteDetailAppeared)) { _ in
@@ -190,7 +201,7 @@ struct NoteListView: View {
             }
         }
         .sheet(isPresented: $showCompose) {
-            ComposeView(onSaved: { await load() })
+            ComposeView(onSaved: { await reload() })
         }
         .sheet(isPresented: $showUpdatePage) {
             NavigationView { UpdateView() }
@@ -262,7 +273,7 @@ struct NoteListView: View {
                 Image(systemName: "wifi.exclamationmark")
                     .font(.system(size: 40)).foregroundColor(.secondary)
                 Text(errorMsg).font(.footnote).foregroundColor(.secondary)
-                Button("重试") { Task { await load() } }
+                Button("重试") { Task { await reload() } }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if notes.isEmpty {
@@ -339,18 +350,15 @@ struct NoteListView: View {
         HStack(spacing: 8) {
             chip("全部", active: !searchTitleOnly) {
                 guard searchTitleOnly else { return }
-                searchTitleOnly = false
-                Task { await load() }
+                searchTitleOnly = false   // loadKey 变了，.task 会自动重取
             }
             chip("仅标题", active: searchTitleOnly) {
                 guard !searchTitleOnly else { return }
                 searchTitleOnly = true
-                Task { await load() }
             }
             Spacer(minLength: 8)
             chip(searchByModified ? "最近修改" : "相关度", active: searchByModified) {
                 searchByModified.toggle()
-                Task { await load() }
             }
         }
         .listRowSeparator(.hidden)
@@ -395,7 +403,7 @@ struct NoteListView: View {
                 Text("在列表上右滑，或长按笔记 → 收藏")
                     .font(.caption).foregroundColor(Color(UIColor.tertiaryLabel))
             } else if !isSearching {
-                Button("刷新试试") { Task { await load() } }
+                Button("刷新试试") { Task { await reload() } }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -617,33 +625,28 @@ struct NoteListView: View {
 
     // MARK: - 数据
 
-    private func load() async {
+    private func load(force: Bool = false) async {
+        let key = loadKey
+        let q = searchQuery.trimmingCharacters(in: .whitespaces) // 提到 do 外：catch 里也要用它记日志
+        // 目录页内容由 TreeView 自己拉，这里不需要列表。
+        // ⚠️ 2026-10-20 日志实证：以前切到「目录」也会打一次「最近列表(30)…加载完成：30 条（目录）」，
+        //    而这 30 条根本没人用 —— 纯浪费一次往返。
+        if q.isEmpty && browseMode == .tree {
+            loading = false
+            return
+        }
+        // 缓存命中：直接渲染，不进 loading —— 切 tab 应该是「秒切」，
+        // 闪一下加载指示器反而像卡了（下拉刷新走 force，不受影响）
+        if !force, let c = listCache[key] {
+            notes = c
+            loading = false
+            return
+        }
         loading = true
         loadGeneration += 1
         let gen = loadGeneration
-        let q = searchQuery.trimmingCharacters(in: .whitespaces) // 提到 do 外：catch 里也要用它记日志
         do {
-            let result: [Note]
-            if q.isEmpty {
-                switch browseMode {
-                case .favorites:
-                    result = try await ETAPIClient.shared.bookmarkedNotes()
-                default:
-                    result = try await ETAPIClient.shared.recentNotes()
-                    NoteCache.shared.saveRecentNotes(result) // 缓存，离线可看
-                }
-            } else {
-                // 拉多一点再做本地筛选：标题过滤 / 按修改时间重排都在客户端完成，
-                // 不需要服务端支持额外的搜索语法（也更不容易因为服务端版本差异翻车）
-                var hits = try await ETAPIClient.shared.searchNotes(q, limit: 100)
-                if searchTitleOnly {
-                    hits = hits.filter { $0.title.localizedCaseInsensitiveContains(q) }
-                }
-                if searchByModified {
-                    hits.sort { ($0.modifiedDate ?? .distantPast) > ($1.modifiedDate ?? .distantPast) }
-                }
-                result = hits
-            }
+            let result = try await fetchList(key: key, query: q, force: force)
             guard gen == loadGeneration else { return }
             notes = result
             if !q.isEmpty && !result.isEmpty {
@@ -673,6 +676,64 @@ struct NoteListView: View {
         loading = false
     }
 
+    /// 取数（带缓存 + 并发去重）：
+    /// - 缓存命中直接返回（切 tab 秒开，不再重复打网络）
+    /// - 同一个 key 同时来了多次请求，复用同一个 Task，只打一次网络
+    /// - force（下拉刷新 / 刚改过内容）绕过缓存并刷新缓存
+    private func fetchList(key: String, query q: String, force: Bool) async throws -> [Note] {
+        if !force, let c = listCache[key] { return c }
+        if let t = inflight[key] { return try await t.value }
+
+        let mode = browseMode
+        let titleOnly = searchTitleOnly
+        let byModified = searchByModified
+        let task = Task { () throws -> [Note] in
+            if q.isEmpty {
+                switch mode {
+                case .favorites:
+                    return try await ETAPIClient.shared.bookmarkedNotes()
+                default:
+                    let r = try await ETAPIClient.shared.recentNotes()
+                    NoteCache.shared.saveRecentNotes(r) // 缓存，离线可看
+                    return r
+                }
+            }
+            // 拉多一点再做本地筛选：标题过滤 / 按修改时间重排都在客户端完成，
+            // 不需要服务端支持额外的搜索语法（也更不容易因为服务端版本差异翻车）
+            var hits = try await ETAPIClient.shared.searchNotes(q, limit: 100)
+            if titleOnly {
+                hits = hits.filter { $0.title.localizedCaseInsensitiveContains(q) }
+            }
+            if byModified {
+                hits.sort { ($0.modifiedDate ?? .distantPast) > ($1.modifiedDate ?? .distantPast) }
+            }
+            return hits
+        }
+        inflight[key] = task
+        do {
+            let r = try await task.value
+            inflight[key] = nil
+            listCache[key] = r
+            return r
+        } catch {
+            inflight[key] = nil
+            throw error
+        }
+    }
+
+    /// 让缓存失效（新建/删除/移动/改标题之后必须调，否则用户看不到变化）
+    private func invalidateListCache() {
+        listCache.removeAll()
+    }
+
+    /// 数据变了要看到最新：清缓存再拉。
+    /// ⚠️ 加了 listCache 之后，凡是「内容真的变了」的地方都必须走这里，
+    ///    只调 load() 会命中缓存、界面纹丝不动（用户会以为操作没生效）。
+    private func reload() async {
+        invalidateListCache()
+        await load(force: true)
+    }
+
     /// 记录搜索历史：去重置顶、最多 8 条、UserDefaults 持久化
     private func recordSearch(_ term: String) {
         var list = UserDefaults.standard.stringArray(forKey: searchHistoryKey) ?? []
@@ -699,6 +760,9 @@ struct NoteListView: View {
         }
         NoteCache.shared.remove(note.noteId)
         notes.removeAll { $0.noteId == note.noteId }
+        // ⚠️ 列表缓存里还有这条（收藏/搜索等别的 key 里也可能有），不清的话
+        //    切个 tab 回来它又冒出来了（2026-10-20 加缓存时补的）
+        invalidateListCache()
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         deleting = false
         noteToDelete = nil
@@ -715,7 +779,7 @@ struct NoteListView: View {
                 showToast("已收藏")
             }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
-            await load()
+            await reload()
         } catch {
             showToast("操作失败：\(error.localizedDescription)")
         }
@@ -734,7 +798,7 @@ struct NoteListView: View {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             showToast("已\(target.action.verb)到「\(title)」")
             AppLogger.shared.log("\(target.action.verb)笔记[\(target.note.title)] → \(title)")
-            await load()
+            await reload()
         } catch {
             showToast("\(target.action.verb)失败：\(error.localizedDescription)")
             AppLogger.shared.log("\(target.action.verb)失败: \(error.localizedDescription)")
