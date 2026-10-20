@@ -523,6 +523,10 @@ struct NativeEditorView: View {
     @State private var content: String = ""
     @State private var saving = false
     @State private var errorMsg = ""
+    /// 进入编辑时服务端的版本戳（保存前拿它比对，别处改过就先问用户再写）
+    @State private var baseStamp: String?
+    @State private var showConflict = false
+    @State private var loadingServer = false
 
     var body: some View {
         NavigationView {
@@ -544,6 +548,14 @@ struct NativeEditorView: View {
                             .font(.footnote).foregroundColor(.secondary)
                     }
                 }
+                if loadingServer {
+                    Section {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("载入服务端版本…").font(.footnote).foregroundColor(.secondary)
+                        }
+                    }
+                }
                 if !errorMsg.isEmpty {
                     Section { Text(errorMsg).font(.footnote).foregroundColor(.red) }
                 }
@@ -561,47 +573,99 @@ struct NativeEditorView: View {
             .onAppear {
                 title = note.title
                 content = initialContent
+                baseStamp = note.versionStamp
+            }
+            // 保存前发现「别处改过这篇」→ 让用户裁决，不静默覆盖
+            .confirmationDialog("这篇笔记在别处被修改过", isPresented: $showConflict, titleVisibility: .visible) {
+                Button("用我的改动覆盖") {
+                    Task { await commit() }
+                }
+                Button("放弃我的改动，载入服务端最新版", role: .destructive) {
+                    Task { await loadServerVersion() }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("你编辑期间这篇笔记在别处（桌面端/网页）被改过。直接保存会覆盖对方的改动。")
             }
         }
     }
 
+    private var titleChanged: Bool { title != note.title }
+    private var contentChanged: Bool { note.type == "code" && content != initialContent }
+
     private func save() {
         saving = true
         Task {
-            let titleChanged = title != note.title
-            let contentChanged = note.type == "code" && content != initialContent
-            do {
-                // 标题变化 → PATCH；正文变化（code 类型）→ PUT content
-                if titleChanged {
-                    _ = try await ETAPIClient.shared.patchNote(note.noteId, fields: ["title": title])
-                }
-                if contentChanged {
-                    try await ETAPIClient.shared.putContent(note.noteId, content: content)
-                }
-            } catch {
-                // 断网/失败：入离线队列，联网后自动补交（队列保序，先标题后正文）
-                if titleChanged {
-                    NoteCache.shared.enqueue(PendingOp(kind: "patchTitle", id: UUID().uuidString,
-                        noteId: note.noteId, title: title, content: nil, parentNoteId: nil,
-                        createdAt: Date()))
-                }
-                if contentChanged {
-                    NoteCache.shared.enqueue(PendingOp(kind: "putContent", id: UUID().uuidString,
-                        noteId: note.noteId, title: nil, content: content, parentNoteId: nil,
-                        createdAt: Date()))
-                }
+            guard titleChanged || contentChanged else {
+                dismiss()          // 没改动就别写，省一次网络往返
+                saving = false
+                return
             }
-            // 无论在线离线都更新本地缓存并关闭（离线队列保证最终一致）
-            NoteCache.shared.saveContent(note.noteId, text: content)
-            if titleChanged {
-                NotificationCenter.default.post(name: .noteMetaChanged, object: nil)
+            // 在线且拿得到服务端版本戳 → 先比对，防覆盖
+            if let base = baseStamp, !base.isEmpty,
+               let current = try? await ETAPIClient.shared.getNote(note.noteId).versionStamp,
+               let cur = current, !cur.isEmpty, cur != base {
+                AppLogger.shared.log("保存前发现冲突[\(note.noteId)]：服务端 \(cur) ≠ 基准 \(base)")
+                saving = false
+                showConflict = true
+                return
             }
-            if !NoteCache.shared.pendingOps.isEmpty {
-                Task { await NoteCache.shared.flushPendingOps() }  // 顺手补交旧积压
-            }
-            dismiss()
-            saving = false
+            await commit()
         }
+    }
+
+    /// 真正落库：在线直写，失败进离线队列（带上版本戳，补交时再比对一次）
+    private func commit() async {
+        let t = titleChanged, c = contentChanged
+        do {
+            // 标题变化 → PATCH；正文变化（code 类型）→ PUT content
+            if t {
+                _ = try await ETAPIClient.shared.patchNote(note.noteId, fields: ["title": title])
+            }
+            if c {
+                try await ETAPIClient.shared.putContent(note.noteId, content: content)
+            }
+        } catch {
+            // 断网/失败：入离线队列，联网后自动补交（队列保序，先标题后正文）
+            if t {
+                NoteCache.shared.enqueue(PendingOp(kind: "patchTitle", id: UUID().uuidString,
+                    noteId: note.noteId, title: title, content: nil, parentNoteId: nil,
+                    createdAt: Date(), baseStamp: baseStamp))
+            }
+            if c {
+                NoteCache.shared.enqueue(PendingOp(kind: "putContent", id: UUID().uuidString,
+                    noteId: note.noteId, title: nil, content: content, parentNoteId: nil,
+                    createdAt: Date(), baseStamp: baseStamp))
+            }
+        }
+        // 无论在线离线都更新本地缓存并关闭（离线队列保证最终一致）
+        NoteCache.shared.saveContent(note.noteId, text: content)
+        if t {
+            NotificationCenter.default.post(name: .noteMetaChanged, object: nil)
+        }
+        if !NoteCache.shared.pendingOps.isEmpty {
+            Task { await NoteCache.shared.flushPendingOps() }  // 顺手补交旧积压
+        }
+        dismiss()
+        saving = false
+    }
+
+    /// 放弃本地改动：拉服务端最新标题+正文回填，编辑基准同步更新（编辑器不关，用户接着看）
+    private func loadServerVersion() async {
+        loadingServer = true
+        do {
+            let fresh = try await ETAPIClient.shared.getNote(note.noteId)
+            let freshContent = try? await ETAPIClient.shared.getContent(note.noteId)
+            title = fresh.title
+            if let fc = freshContent { content = fc }
+            baseStamp = fresh.versionStamp
+            NoteCache.shared.saveContent(note.noteId, text: content)
+            AppLogger.shared.log("冲突裁决：已载入服务端版本 \(note.noteId)")
+            errorMsg = "已载入服务端最新版本"
+        } catch {
+            errorMsg = "载入服务端版本失败：\(error.localizedDescription)"
+        }
+        loadingServer = false
     }
 }
 

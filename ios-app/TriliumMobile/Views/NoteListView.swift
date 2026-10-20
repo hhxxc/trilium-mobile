@@ -59,6 +59,9 @@ struct NoteListView: View {
     @State private var searchHistory: [String] = []
     /// 离线待同步操作数（顶部提示条）
     @State private var pendingCount = 0
+    /// 冲突待裁决数：补交时发现别处改过同一篇，需要用户选「保留我的 / 丢弃我的」
+    @State private var conflictCount = 0
+    @State private var showConflicts = false
     /// 左滑抽屉：目录树覆盖层（学有道云/Obsidian——树和列表共存，不用二选一）。
     /// ⚠️ 由 MainView 持有：抽屉是 ZStack 里的覆盖层，但导航栏（toolbar 按钮）由
     ///    NavigationView 单独渲染，层级永远高于内容区 → 不把状态提上去，
@@ -161,7 +164,7 @@ struct NoteListView: View {
         .refreshable { await load() }
         .onAppear {
             searchHistory = UserDefaults.standard.stringArray(forKey: searchHistoryKey) ?? []
-            pendingCount = NoteCache.shared.pendingOps.count
+            refreshPendingBadge()
         }
         // 搜索框在导航栏里（层级高于遮罩，压不住）：抽屉开着时一旦开始输入就顺手收回，
         // 否则会出现「抽屉还开着、导航栏已切成搜索态」的错位画面
@@ -171,7 +174,10 @@ struct NoteListView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NoteCache.pendingOpsChanged)) { _ in
-            pendingCount = NoteCache.shared.pendingOps.count
+            refreshPendingBadge()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NoteCache.conflictDetected)) { _ in
+            refreshPendingBadge()
         }
         // 编辑器改了标题：就地刷新列表，返回时看到的不是旧标题
         .onReceive(NotificationCenter.default.publisher(for: .noteMetaChanged)) { _ in
@@ -188,6 +194,10 @@ struct NoteListView: View {
         }
         .sheet(isPresented: $showUpdatePage) {
             NavigationView { UpdateView() }
+                .navigationViewStyle(.stack)
+        }
+        .sheet(isPresented: $showConflicts) {
+            NavigationView { ConflictResolveView(onResolved: { refreshPendingBadge() }) }
                 .navigationViewStyle(.stack)
         }
         .sheet(item: $organizeTarget) { target in
@@ -272,6 +282,20 @@ struct NoteListView: View {
                             Text("\(pendingCount) 条待同步（点击立即上传）")
                                 .font(.footnote)
                                 .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                    }
+                    .listRowSeparator(.hidden)
+                }
+                // 冲突必须让用户看见：静默覆盖别人（桌面端/网页）的改动是最难受的一种丢数据
+                if conflictCount > 0 {
+                    Button { showConflicts = true } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.red)
+                            Text("\(conflictCount) 条改动与服务端冲突（点击处理）")
+                                .font(.footnote)
+                                .foregroundColor(.red)
                             Spacer()
                         }
                     }
@@ -717,6 +741,12 @@ struct NoteListView: View {
         }
     }
 
+    /// 待同步 / 冲突角标刷新（入队、补交、冲突裁决后都要刷）
+    private func refreshPendingBadge() {
+        pendingCount = NoteCache.shared.pendingOps.count
+        conflictCount = NoteCache.shared.conflictedOps().count
+    }
+
     private func showToast(_ msg: String) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         withAnimation(.easeOut(duration: 0.18)) { toast = msg }
@@ -725,5 +755,91 @@ struct NoteListView: View {
                 withAnimation(.easeIn(duration: 0.2)) { toast = nil }
             }
         }
+    }
+}
+
+/// 冲突裁决页：离线期间的改动，在补交时发现服务端（桌面端/网页）已经改过同一篇。
+/// 两条路：保留我的（覆盖对方）/ 丢弃我的（以服务端为准）。
+/// ⚠️ 不做自动合并 —— 正文是 HTML/代码，自动合并只会合成一坨谁都看不懂的东西，
+///    把选择权交给人，比"聪明"地弄坏内容强。
+struct ConflictResolveView: View {
+    var onResolved: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var ops: [PendingOp] = NoteCache.shared.conflictedOps()
+    @State private var busy = false
+
+    var body: some View {
+        Group {
+            if ops.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 40)).foregroundColor(.secondary)
+                    Text("没有待处理的冲突").font(.subheadline).foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(ops) { op in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(op.title?.isEmpty == false ? op.title! : "（无标题）")
+                                .font(.subheadline)
+                            Text(Self.kindText(op.kind))
+                                .font(.caption).foregroundColor(.secondary)
+                            HStack(spacing: 12) {
+                                Button {
+                                    keepMine(op)
+                                } label: {
+                                    Text("保留我的").font(.footnote)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(busy)
+                                Button(role: .destructive) {
+                                    dropMine(op)
+                                } label: {
+                                    Text("丢弃我的").font(.footnote)
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(busy)
+                            }
+                        }
+                        .padding(.vertical, 6)
+                    }
+                }
+            }
+        }
+        .navigationTitle("冲突处理")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("完成") { dismiss() }
+            }
+        }
+    }
+
+    private static func kindText(_ kind: String) -> String {
+        switch kind {
+        case "putContent": return "改动的是正文"
+        case "patchTitle": return "改动的是标题"
+        default: return "改动类型：\(kind)"
+        }
+    }
+
+    private func keepMine(_ op: PendingOp) {
+        NoteCache.shared.resolveKeepMine(op.id)
+        ops.removeAll { $0.id == op.id }
+        onResolved()
+        // 裁决完立刻补交：保留我的 → 直接覆盖写上去
+        Task {
+            busy = true
+            await NoteCache.shared.flushPendingOps()
+            busy = false
+            onResolved()
+        }
+    }
+
+    private func dropMine(_ op: PendingOp) {
+        NoteCache.shared.resolveDropMine(op.id)
+        ops.removeAll { $0.id == op.id }
+        onResolved()
     }
 }

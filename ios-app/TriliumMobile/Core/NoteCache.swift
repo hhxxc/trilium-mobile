@@ -171,6 +171,26 @@ struct PendingOp: Codable, Identifiable {
     var content: String?
     var parentNoteId: String?
     let createdAt: Date
+    /// 入队时本地已知的服务端版本戳（utcDateModified）——补交前拿它比对，
+    /// 对不上说明别的端改过这篇笔记，不能直接覆盖（2026-10-20 加的冲突保护）
+    var baseStamp: String?
+    /// 已判定冲突、等用户裁决：补交时跳过它，不再无限重试
+    var conflicted: Bool = false
+
+    /// ⚠️ 显式 init（带默认值）：新增字段时旧调用点不用逐个改
+    init(kind: String, id: String, noteId: String, title: String? = nil,
+         content: String? = nil, parentNoteId: String? = nil, createdAt: Date = Date(),
+         baseStamp: String? = nil, conflicted: Bool = false) {
+        self.kind = kind
+        self.id = id
+        self.noteId = noteId
+        self.title = title
+        self.content = content
+        self.parentNoteId = parentNoteId
+        self.createdAt = createdAt
+        self.baseStamp = baseStamp
+        self.conflicted = conflicted
+    }
 }
 
 extension NoteCache {
@@ -178,6 +198,8 @@ extension NoteCache {
 
     /// 队列变更通知（列表/设置页刷新待同步角标）
     static let pendingOpsChanged = Notification.Name("trilium.pendingOpsChanged")
+    /// 补交时发现冲突（需要用户裁决）——列表顶部的冲突提示据此刷新
+    static let conflictDetected = Notification.Name("trilium.conflictDetected")
 
     var pendingOps: [PendingOp] {
         get {
@@ -203,8 +225,30 @@ extension NoteCache {
     func flushPendingOps() async -> Bool {
         var list = pendingOps
         guard !list.isEmpty else { return true }
-        while !list.isEmpty {
-            let op = list[0]
+        var idx = 0
+        var allSettled = true
+        while idx < list.count {
+            let op = list[idx]
+            // 已判冲突：跳过，等用户在「冲突处理」里裁决（不再无限重试）
+            if op.conflicted {
+                allSettled = false
+                idx += 1
+                continue
+            }
+            // ⚠️ 补交前比对版本戳：离线期间别处（桌面端/网页）改过这篇 → 不能直接覆盖
+            if let base = op.baseStamp, !base.isEmpty,
+               op.kind == "putContent" || op.kind == "patchTitle" {
+                let current = try? await ETAPIClient.shared.getNote(op.noteId).versionStamp
+                if let cur = current, !cur.isEmpty, cur != base {
+                    list[idx].conflicted = true
+                    pendingOps = list
+                    AppLogger.shared.log("补交发现冲突[\(op.kind)] \(op.noteId)：服务端 \(cur) ≠ 我的基准 \(base)，等待裁决")
+                    NotificationCenter.default.post(name: Self.conflictDetected, object: nil)
+                    allSettled = false
+                    idx += 1
+                    continue
+                }
+            }
             do {
                 switch op.kind {
                 case "putContent":
@@ -228,14 +272,38 @@ extension NoteCache {
                 default:
                     break  // 未知类型（旧版本残留）：丢弃
                 }
-                list.removeFirst()
+                list.remove(at: idx)
                 pendingOps = list
                 AppLogger.shared.log("离线补交成功: \(op.kind) \(op.noteId)，剩 \(list.count) 条")
             } catch {
                 AppLogger.shared.log("离线补交失败（保留队列，下次重试）: \(error.localizedDescription)")
-                return false
+                return false   // 保序：前面的没成，后面的不能跳
             }
         }
-        return true
+        return allSettled
+    }
+
+    // MARK: - 冲突裁决（补交时发现别处改过同一篇，交给用户定）
+
+    /// 等裁决的冲突项
+    func conflictedOps() -> [PendingOp] { pendingOps.filter { $0.conflicted } }
+
+    /// 保留我的：清掉冲突标记 + 作废基准（下次补交直接覆盖提交）
+    func resolveKeepMine(_ opId: String) {
+        var list = pendingOps
+        guard let i = list.firstIndex(where: { $0.id == opId }) else { return }
+        list[i].conflicted = false
+        list[i].baseStamp = nil      // 已裁决，不再比对
+        pendingOps = list
+        AppLogger.shared.log("冲突裁决[保留我的]：\(list[i].kind) \(list[i].noteId)")
+    }
+
+    /// 丢弃我的：整条从队列移除（服务端版本为准）
+    func resolveDropMine(_ opId: String) {
+        var list = pendingOps
+        guard let i = list.firstIndex(where: { $0.id == opId }) else { return }
+        let op = list.remove(at: i)
+        pendingOps = list
+        AppLogger.shared.log("冲突裁决[丢弃我的]：\(op.kind) \(op.noteId)")
     }
 }

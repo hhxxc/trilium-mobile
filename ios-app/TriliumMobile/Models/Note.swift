@@ -26,7 +26,14 @@ struct Note: Codable, Identifiable, Equatable {
         type == "book" || type == "noteMap" || type == "search" || type == "relationMap"
     }
 
-    /// Trilium 的**系统内部笔记**，用户不该在 App 里看到。
+    /// 冲突比对用的版本戳：服务端改过它就会变（保存前拿它跟本地基准比）
+    /// ⚠️ 取 utc 字段为准：dateModified 是本地时区字符串，跨端比对会错
+    var versionStamp: String? {
+        if let s = utcDateModified, !s.isEmpty { return s }
+        if let s = dateModified, !s.isEmpty { return s }
+        return nil
+    }
+
     /// 两类：
     ///   1. id 以 `_` 开头 —— 根下那个「隐藏的笔记」(`_hidden`)、`_share`、`_options`、
     ///      搜索历史、SQL 控制台、AI 对话…全是引擎自己的数据，不是用户内容；
