@@ -324,8 +324,27 @@ struct NoteListView: View {
                         listRow(note, showsLocation: true)
                     }
                 } else {
-                    // 浏览模式按时间分组
-                    ForEach(timeGroups.filter { !$0.notes.isEmpty }, id: \.title) { g in
+                    // 置顶：收藏（星标）的排在时间分组之前。
+                    // ⚠️ 只收客户端排序，不写服务端；取消收藏就自动回到时间分组里，随时可退。
+                    //    只在「最近」生效：收藏页本来全是收藏的，再置顶一次没意义。
+                    if !pinnedNotes.isEmpty {
+                        Section {
+                            ForEach(pinnedNotes) { note in
+                                listRow(note)
+                            }
+                        } header: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "star.fill")
+                                    .font(.caption2)
+                                Text("置顶")
+                            }
+                            .font(.footnote.weight(.semibold))
+                            .foregroundColor(.orange)
+                            .textCase(nil)
+                        }
+                    }
+                    // 浏览模式按时间分组（已在上面置顶的从这里剔掉，避免同一条出现两次）
+                    ForEach(visibleTimeGroups, id: \.title) { g in
                         Section {
                             ForEach(g.notes) { note in
                                 listRow(note)
@@ -472,6 +491,24 @@ struct NoteListView: View {
                 Label("删除笔记", systemImage: "trash")
             }
         }
+    }
+
+    /// 置顶区：最近列表里把收藏（星标）的排最前。
+    /// ⚠️ 纯客户端排序，不写服务端 —— 取消收藏它就自动回到时间分组里，随时可退。
+    ///    只在「最近」生效：收藏页本来全是收藏的，再置顶一次没意义；搜索结果按相关度排。
+    private var pinnedNotes: [Note] {
+        guard browseMode == .recent, !isSearching else { return [] }
+        return notes.filter { $0.isBookmarked }
+    }
+
+    /// 实际用于显示的时间分组：置顶模式下把已收藏的剔掉
+    /// （它们显示在上面的「置顶」区，不剔的话同一条笔记会出现两次）
+    private var visibleTimeGroups: [(title: String, notes: [Note])] {
+        let topPinned = browseMode == .recent
+        return timeGroups
+            .map { (title: $0.title,
+                    notes: topPinned ? $0.notes.filter { !$0.isBookmarked } : $0.notes) }
+            .filter { !$0.notes.isEmpty }
     }
 
     /// 按修改时间分组：今天 / 昨天 / 本周 / 更早（依赖服务端 dateModified desc 排序）
