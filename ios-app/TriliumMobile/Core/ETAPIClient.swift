@@ -124,8 +124,8 @@ struct ETAPIClient {
     /// 发请求，返回 data；401（非登录接口）时广播会话过期
     private func raw(_ path: String, method: String = "GET", query: [URLQueryItem] = [],
                      body: Data? = nil, contentType: String = "application/json",
-                     auth: Bool = true) async throws -> Data {
-        guard var comp = URLComponents(url: baseURL.appendingPathComponent(path),
+                     auth: Bool = true, base: URL? = nil) async throws -> Data {
+        guard var comp = URLComponents(url: (base ?? baseURL).appendingPathComponent(path),
                                        resolvingAgainstBaseURL: false) else {
             throw APIError.invalidURL
         }
@@ -207,13 +207,15 @@ struct ETAPIClient {
 
     // MARK: - 认证
 
-    /// 用密码换 ETAPI token（服务端返回 { authToken }，兼容 { token }）
-    func login(password: String) async throws -> String {
+    /// 用密码换 ETAPI token（服务端返回 { authToken }，兼容 { token }）。
+    /// ⚠️ at：登录页输入框里的地址——登录请求必须打到**用户刚填的那个地址**，
+    ///    不能等登录成功保存后才生效（旧版读存储值，改了地址登录会打向旧服务器）。
+    func login(password: String, at explicitBase: URL? = nil) async throws -> String {
         struct LoginResp: Decodable { let authToken: String?; let token: String? }
         let body = try JSONSerialization.data(withJSONObject: [
             "password": password, "tokenName": "trilium-mobile"
         ])
-        let data = try await raw("/etapi/auth/login", method: "POST", body: body, auth: false)
+        let data = try await raw("/etapi/auth/login", method: "POST", body: body, auth: false, base: explicitBase)
         let resp = try JSONDecoder().decode(LoginResp.self, from: data)
         if let t = resp.authToken ?? resp.token, !t.isEmpty { return t }
         throw APIError.invalidResponse

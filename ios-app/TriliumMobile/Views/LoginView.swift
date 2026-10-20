@@ -21,6 +21,15 @@ struct LoginView: View {
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
                         .textContentType(.URL)
+                    // 粘贴混入全角括号/空格时肉眼看不见，但 DNS 会整个解析失败（10-20 事故）→ 提前亮出来
+                    if AppSettings.serverAddressHasJunk(server) {
+                        Text("地址里混入了全角符号（粘贴带入的），登录时会自动清洗")
+                            .font(.footnote).foregroundColor(.orange)
+                    }
+                    if !AppSettings.isValidServerAddress(server) {
+                        Text("地址无效：需要 http:// 或 https:// 开头的完整地址")
+                            .font(.footnote).foregroundColor(.red)
+                    }
                     SecureField("Trilium 登录密码", text: $password)
                 }
                 Section {
@@ -31,7 +40,7 @@ struct LoginView: View {
                             Text("登录").frame(maxWidth: .infinity)
                         }
                     }
-                    .disabled(busy || password.isEmpty)
+                    .disabled(busy || password.isEmpty || !AppSettings.isValidServerAddress(server))
                 }
                 if !status.isEmpty {
                     Section { Text(status).font(.footnote).foregroundColor(.secondary) }
@@ -61,11 +70,15 @@ struct LoginView: View {
     private func doLogin() {
         busy = true
         status = "连接中…"
-        AppLogger.shared.log("点击登录：服务器 \(server)")
+        // 先清洗再登录：脏字符（全角括号等）会让 DNS 直接解析失败
+        let cleaned = AppSettings.sanitizeServerAddress(server)
+        server = cleaned
+        AppLogger.shared.log("点击登录：服务器 \(cleaned)")
         Task {
             do {
-                let token = try await ETAPIClient.shared.login(password: password)
-                settings.save(token: token, server: server)
+                // 登录打到输入框里的地址（不是存储里的旧地址）
+                let token = try await ETAPIClient.shared.login(password: password, at: URL(string: cleaned))
+                settings.save(token: token, server: cleaned)
                 AppLogger.shared.log("登录成功：token 长度 \(token.count)")
                 password = ""
                 status = ""

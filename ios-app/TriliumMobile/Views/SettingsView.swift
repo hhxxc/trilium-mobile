@@ -10,6 +10,9 @@ struct SettingsView: View {
     @State private var serverVersion = ""
     @State private var cacheSize: Int64 = -1 // -1 = 未测量
     @State private var probeMsg = ""
+    /// 服务器地址编辑草稿（10-20 起支持在设置页直接改，不用再退出登录）
+    @State private var serverDraft = ""
+    @State private var serverMsg = ""
 
     var body: some View {
         NavigationView {
@@ -17,9 +20,26 @@ struct SettingsView: View {
                 Section {
                     HStack {
                         Text("服务器")
-                        Spacer()
-                        Text(settings.server).font(.footnote).foregroundColor(.secondary)
-                            .lineLimit(1).truncationMode(.middle)
+                        TextField(AppConfig.defaultServer, text: $serverDraft)
+                            .font(.footnote)
+                            .multilineTextAlignment(.trailing)
+                            .keyboardType(.URL)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                            .textContentType(.URL)
+                            .onSubmit { commitServer() }
+                    }
+                    // 全角脏字符肉眼看不见（粘贴带入），必须亮出来——这是 DNS 解析失败的元凶（10-20 事故）
+                    if AppSettings.serverAddressHasJunk(serverDraft) {
+                        Text("地址里混入了全角符号，保存时会自动清洗为半角")
+                            .font(.caption).foregroundColor(.orange)
+                    }
+                    if serverDraft != settings.server {
+                        Button("保存服务器地址") { commitServer() }
+                            .disabled(!AppSettings.isValidServerAddress(serverDraft))
+                    }
+                    if !serverMsg.isEmpty {
+                        Text(serverMsg).font(.caption).foregroundColor(.secondary)
                     }
                     // 主备地址：当前地址不通时（证书过期 / 换网）自动互换，token 不变
                     HStack {
@@ -32,6 +52,14 @@ struct SettingsView: View {
                             .keyboardType(.URL)
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
+                            .onSubmit {
+                                let cleaned = AppSettings.sanitizeServerAddress(settings.serverBackup)
+                                if cleaned != settings.serverBackup { settings.serverBackup = cleaned }
+                            }
+                    }
+                    if AppSettings.serverAddressHasJunk(settings.serverBackup) {
+                        Text("备用地址里混入了全角符号，回车时会自动清洗")
+                            .font(.caption).foregroundColor(.orange)
                     }
                     Button {
                         Task {
@@ -150,6 +178,7 @@ struct SettingsView: View {
                 }
             }
             .task {
+                serverDraft = settings.server
                 if let info = try? await ETAPIClient.shared.appInfo() {
                     serverVersion = info.appVersion ?? ""
                 }
@@ -178,6 +207,20 @@ struct SettingsView: View {
         case .failed: return .orange
         default: return .secondary
         }
+    }
+
+    /// 保存服务器地址：清洗 → 校验 → 落库（updateServer 会处理清缓存/主备互换）
+    private func commitServer() {
+        let cleaned = AppSettings.sanitizeServerAddress(serverDraft)
+        guard AppSettings.isValidServerAddress(cleaned) else {
+            serverMsg = "地址无效：需要 http:// 或 https:// 开头的完整地址"
+            return
+        }
+        serverDraft = cleaned
+        let changed = cleaned != settings.server
+        settings.updateServer(cleaned)
+        serverMsg = changed ? "已保存并切换到 \(cleaned)（本地缓存已清）" : "已保存"
+        AppLogger.shared.log("设置页修改服务器地址 → \(cleaned)")
     }
 
     private func fmtKB(_ n: Int64) -> String {

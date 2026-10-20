@@ -174,7 +174,9 @@ enum UpdateChecker {
     static func lanMirrorURL(fileName: String) -> URL? {
         guard !fileName.isEmpty else { return nil }
         for raw in [AppSettings.shared.serverBackup, AppConfig.defaultBackupServer] {
-            guard let host = URL(string: raw)?.host, !host.isEmpty else { continue }
+            // 清洗一遍再拼：备用地址可能存了粘贴混入的全角字符（10-20 事故），
+            // 带脏字符的 host 会让整条镜像 URL 废掉
+            guard let host = URL(string: AppSettings.sanitizeServerAddress(raw))?.host, !host.isEmpty else { continue }
             let isPrivate = host.hasPrefix("192.168.") || host.hasPrefix("10.")
                 || host.hasPrefix("172.") || host == "localhost"
             if isPrivate {
