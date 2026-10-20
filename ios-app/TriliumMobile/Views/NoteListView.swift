@@ -400,7 +400,9 @@ struct NoteListView: View {
                 }
                 .padding(.top, 6)
             } else if browseMode == .favorites {
-                Text("在列表上右滑，或长按笔记 → 收藏")
+                // ⚠️ 别再写「右滑」：收藏在左滑（见 listRow 的注释），
+                //    而且从最左边右滑会被「开抽屉」手势抢走，等于白说
+                Text("左滑列表行 → 收藏（或长按笔记）")
                     .font(.caption).foregroundColor(Color(UIColor.tertiaryLabel))
             } else if !isSearching {
                 Button("刷新试试") { Task { await reload() } }
@@ -409,14 +411,21 @@ struct NoteListView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// 列表行：进详情 + 左滑收藏/移动 + 右滑删除 + 长按整理菜单
+    /// 列表行：进详情 + **左滑**收藏/删除 + 右滑移动 + 长按整理菜单
+    ///
+    /// ⚠️ 2026-10-20 修正（用户反馈「左滑没有收藏」）：SwiftUI 的 edge 指的是
+    ///    动作出现在行的哪一侧 —— `.trailing` = 从右往左滑（**左滑**）露出，
+    ///    `.leading` = 从左往右滑（**右滑**）露出。以前收藏/移动挂在 `.leading`，
+    ///    于是左滑只看到「删除」，收藏得右滑才有；而右滑还和「左侧 44pt 起手开抽屉」
+    ///    的手势抢（从最左边右滑是开抽屉，不是出菜单）—— 等于收藏几乎没有可达路径。
+    ///    现在收藏放左滑第一个（最顺手），删除同侧但要点击且有二次确认，移动挪到右滑。
     private func listRow(_ note: Note, showsLocation: Bool = false) -> some View {
         NavigationLink(destination: NoteDetailView(note: note)) {
             NoteRow(note: note, showsLocation: showsLocation)
         }
         // 系统分隔线贴着行左边缘、和标题文字不对齐 → 隐藏，改由 NoteRow 自己画
         .listRowSeparator(.hidden)
-        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button {
                 Task { await toggleBookmark(note) }
             } label: {
@@ -425,19 +434,19 @@ struct NoteListView: View {
             }
             .tint(.orange)
 
+            Button(role: .destructive) {
+                noteToDelete = note
+            } label: {
+                Label("删除", systemImage: "trash")
+            }
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
             Button {
                 organizeTarget = OrganizeTarget(note: note, action: .move)
             } label: {
                 Label("移动", systemImage: "folder")
             }
             .tint(.blue)
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button(role: .destructive) {
-                noteToDelete = note
-            } label: {
-                Label("删除", systemImage: "trash")
-            }
         }
         .contextMenu {
             Button {
