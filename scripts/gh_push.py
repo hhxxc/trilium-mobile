@@ -99,24 +99,32 @@ def git(*args, **kw):
     return run(["git"] + list(args), **kw)
 
 
+def gh_cli_api(path, payload=None, method=None):
+    """走 gh CLI（它自己解决 DNS/代理，实测最稳）。"""
+    cmd = ["gh", "api"]
+    if method:
+        cmd += ["-X", method]
+    cmd.append(path)
+    if payload is None:
+        return run(cmd).strip()
+    cmd += ["--input", "-"]
+    return run(cmd, input_text=json.dumps(payload))
+
+
 def gh_api(path, payload=None, method=None):
-    """GitHub API 调用。优先直连 IP（绕开坏 DNS 和代理），失败回退 gh CLI。"""
+    """GitHub API 调用。优先直连 IP（绕开坏 DNS 和代理），**任何**失败都回退 gh CLI。
+    ⚠️ 2026-10-19：硬编码的 GITHUB_IP 会过期，过期后直连拿到 HTTP 400
+    （"malformed request"，其实是打到了错误的节点）。以前 HTTP 错误直接退出，
+    于是一旦 IP 过期推送就彻底废了 —— HTTP 错误也必须回退。"""
     try:
         result = _http(path, method=method or "GET", payload=payload)
         return result if isinstance(result, str) else json.dumps(result)
     except urllib.error.HTTPError as e:
-        raise SystemExit("GitHub API %s %s → HTTP %s\n%s"
-                         % (method or "GET", path, e.code, e.read().decode("utf-8", "replace")[:400]))
+        sys.stderr.write("直连返回 HTTP %s，回退 gh CLI…\n" % e.code)
+        return gh_cli_api(path, payload, method)
     except Exception as e:  # noqa: BLE001 —— 回退到 gh CLI
         sys.stderr.write("直连失败（%s），回退 gh CLI…\n" % e)
-        cmd = ["gh", "api"]
-        if method:
-            cmd += ["-X", method]
-        cmd.append(path)
-        if payload is None:
-            return run(cmd).strip()
-        cmd += ["--input", "-"]
-        return run(cmd, input_text=json.dumps(payload))
+        return gh_cli_api(path, payload, method)
 
 
 def repo_slug():
