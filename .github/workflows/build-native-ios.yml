@@ -109,8 +109,12 @@ jobs:
           ls -la "$DST" | grep -i png | head -20
 
       - name: Build app (ad-hoc signed, no Apple cert needed)
+        id: xcodebuild
         working-directory: ios-app
         run: |
+          # tee 留一份完整日志：编译失败时靠它定位（本机直连 api.github.com 不通，
+          # 拉不到 GitHub Actions 日志，只能把日志推回仓库的 ci-logs 分支自己看）
+          set -o pipefail
           xcodebuild build \
             -project TriliumMobile.xcodeproj \
             -scheme TriliumMobile \
@@ -120,7 +124,22 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee build.log
+
+      # 只在编译这一步失败时执行：把 xcodebuild 原文推到 ci-logs 分支，
+      # 本机 `git fetch origin ci-logs && git show origin/ci-logs:ci-build.log` 即可读到
+      - name: Ship build log to ci-logs branch (on compile failure)
+        if: failure() && steps.xcodebuild.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git checkout -B ci-logs
+          cp ios-app/build.log ci-build.log
+          git add -f ci-build.log
+          git commit -m "ci build log: run ${{ github.run_number }} @ ${{ github.sha }}"
+          git push -f origin ci-logs
 
       - name: Package IPA (TrollStore will re-sign on device)
         working-directory: ios-app

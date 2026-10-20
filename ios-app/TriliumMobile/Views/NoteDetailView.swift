@@ -602,9 +602,11 @@ struct NativeEditorView: View {
                 return
             }
             // 在线且拿得到服务端版本戳 → 先比对，防覆盖
+            // ⚠️ 拆两步写：versionStamp 是 String?，`try? await ...versionStamp`
+            //    会叠成 String??（Swift try? 嵌套可选），后面 isEmpty 编译不过
+            let fresh: Note? = try? await ETAPIClient.shared.getNote(note.noteId)
             if let base = baseStamp, !base.isEmpty,
-               let current = try? await ETAPIClient.shared.getNote(note.noteId).versionStamp,
-               let cur = current, !cur.isEmpty, cur != base {
+               let cur = fresh?.versionStamp, !cur.isEmpty, cur != base {
                 AppLogger.shared.log("保存前发现冲突[\(note.noteId)]：服务端 \(cur) ≠ 基准 \(base)")
                 saving = false
                 showConflict = true

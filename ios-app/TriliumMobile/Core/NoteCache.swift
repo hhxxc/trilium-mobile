@@ -191,6 +191,22 @@ struct PendingOp: Codable, Identifiable {
         self.baseStamp = baseStamp
         self.conflicted = conflicted
     }
+
+    /// ⚠️ 老版本持久化的队列里没有 baseStamp/conflicted —— 解码必须容错。
+    ///    合成版 init(from:) 对非 Optional 字段用 decode（缺键直接抛），
+    ///    一旦抛错，pendingOps 会 `?? []` 静默清空 → 用户离线改的内容整队丢失。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(String.self, forKey: .kind)
+        id = try c.decode(String.self, forKey: .id)
+        noteId = try c.decode(String.self, forKey: .noteId)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        content = try c.decodeIfPresent(String.self, forKey: .content)
+        parentNoteId = try c.decodeIfPresent(String.self, forKey: .parentNoteId)
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        baseStamp = try c.decodeIfPresent(String.self, forKey: .baseStamp)
+        conflicted = try c.decodeIfPresent(Bool.self, forKey: .conflicted) ?? false
+    }
 }
 
 extension NoteCache {
@@ -237,9 +253,12 @@ extension NoteCache {
             }
             // ⚠️ 补交前比对版本戳：离线期间别处（桌面端/网页）改过这篇 → 不能直接覆盖
             if let base = op.baseStamp, !base.isEmpty,
-               op.kind == "putContent" || op.kind == "patchTitle" {
-                let current = try? await ETAPIClient.shared.getNote(op.noteId).versionStamp
-                if let cur = current, !cur.isEmpty, cur != base {
+               (op.kind == "putContent" || op.kind == "patchTitle") {
+                // ⚠️ 别写 `try? await getNote(...).versionStamp`：versionStamp 本身是 String?，
+                //    try? 叠加一层可选后会变成 String??（Swift 的 try? 嵌套可选老坑），
+                //    后面 isEmpty / != 直接编译不过。拆成两步最稳。
+                let fresh: Note? = try? await ETAPIClient.shared.getNote(op.noteId)
+                if let cur = fresh?.versionStamp, !cur.isEmpty, cur != base {
                     list[idx].conflicted = true
                     pendingOps = list
                     AppLogger.shared.log("补交发现冲突[\(op.kind)] \(op.noteId)：服务端 \(cur) ≠ 我的基准 \(base)，等待裁决")
