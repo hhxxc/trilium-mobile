@@ -42,6 +42,18 @@ struct OrganizeTarget: Identifiable {
     let action: OrganizeAction
 }
 
+/// 工具栏图标按钮的按压反馈：按下变淡 + 轻微缩放，松手回弹。
+/// 顶部导航栏按钮默认是「点了没反应」的裸图标，用户反馈「点击效果不行」，
+/// 加这个让每次点击都有肉眼可见 + 可感知的反馈（热区在调用处单独加）。
+private struct PressableIconStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.4 : 1)
+            .scaleEffect(configuration.isPressed ? 0.84 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
 /// 首页：笔记列表（列表优先 + 抽屉目录）。
 /// 大标题 + 搜索；底部胶囊「最近｜收藏｜目录」+ 新建按钮（全在拇指区）。
 struct NoteListView: View {
@@ -146,10 +158,17 @@ struct NoteListView: View {
                 // 抽屉打开时收起：导航栏压在抽屉之上，留着按钮就是穿模 + 可点穿
                 if !drawerOpen && !isSearching && browseMode != .tree {
                     Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { drawerOpen = true }
                     } label: {
                         Image(systemName: "list.bullet.indent")
+                            .font(.system(size: 19, weight: .medium))
+                            // ⚠️ iOS 15 红线：热区 ≥44pt。裸 SF Symbol 热区只有 ~30pt 宽，
+                            //    点不准 = 「点击效果不行」。撑满一块区域 + contentShape 接住点击。
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(PressableIconStyle())
                     .accessibilityLabel("打开目录")
                 }
             }
