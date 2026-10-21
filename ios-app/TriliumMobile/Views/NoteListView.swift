@@ -45,7 +45,8 @@ struct OrganizeTarget: Identifiable {
 /// 工具栏图标按钮的按压反馈：按下变淡 + 轻微缩放，松手回弹。
 /// 顶部导航栏按钮默认是「点了没反应」的裸图标，用户反馈「点击效果不行」，
 /// 加这个让每次点击都有肉眼可见 + 可感知的反馈（热区在调用处单独加）。
-private struct PressableIconStyle: ButtonStyle {
+/// （internal：ComposeView 的收起键盘按钮也用）
+struct PressableIconStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .opacity(configuration.isPressed ? 0.4 : 1)
