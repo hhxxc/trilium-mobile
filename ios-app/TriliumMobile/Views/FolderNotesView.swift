@@ -13,10 +13,18 @@ struct FolderNotesView: View {
     @State private var errorMsg: String?
     @State private var toast: String?
 
+    /// 底部条（选择条）让位高度，和首页 NoteListView 的常量保持一致。
+    /// iOS 15 的 safeAreaInset 不 inset List，只能在列表末尾自己补。
+    private static let bottomBarClearance: CGFloat = 64
+
     // 批量整理
     @State private var selecting = false
     @State private var selected = Set<String>()
     @State private var showMove = false
+    /// 单条删除确认（confirmationDialog 绑定）
+    @State private var noteToDelete: Note?
+    /// 单条移动 / 克隆的目标选择
+    @State private var organizeTarget: OrganizeTarget?
 
     private let accent = Theme.accent
 
@@ -33,8 +41,17 @@ struct FolderNotesView: View {
             } else {
                 ForEach(notes) { n in
                     row(for: n)
-                        .listRowSeparator(.hidden, edges: .all)
                 }
+            }
+            // ⚠️ iOS 15 的 safeAreaInset 对 **List** 不生效（对 ScrollView 才生效）：
+            //   底部选择条一出现就会压住最后一行，补一段等高空白行兜底
+            //   （和首页 NoteListView 是同一处坑，高度也对齐它的工具条）。
+            if selecting && !selected.isEmpty {
+                Color.clear
+                    .frame(height: Self.bottomBarClearance)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
             }
         }
         .listStyle(.plain)
@@ -71,6 +88,21 @@ struct FolderNotesView: View {
                 Task { await moveSelected(to: parentId, title: title) }
             }
         }
+        .sheet(item: $organizeTarget) { target in
+            MoveTargetPicker(noteTitle: target.note.title) { parentId, parentTitle in
+                organizeTarget = nil
+                Task { await performOrganize(target, to: parentId, title: parentTitle) }
+            }
+        }
+        .confirmationDialog(
+            "删除「\(noteToDelete?.title ?? "")」？子笔记将一并删除，不可恢复。",
+            isPresented: Binding(get: { noteToDelete != nil },
+                                 set: { if !$0 { noteToDelete = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("删除", role: .destructive) { Task { await deleteNote() } }
+            Button("取消", role: .cancel) { noteToDelete = nil }
+        }
         .task { await load() }
         .onAppear {
             // 从抽屉树里点进来时，抽屉不会自己消失（它挂在 NoteListView 的覆盖层上）
@@ -97,14 +129,57 @@ struct FolderNotesView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-        } else if n.isContainer {
-            NavigationLink(destination: FolderNotesView(folder: n)) {
-                NoteRow(note: n)
-            }
+            .listRowSeparator(.hidden, edges: .all)
         } else {
-            NavigationLink(destination: NoteDetailView(note: n)) {
-                NoteRow(note: n)
-            }
+            browseLink(for: n)
+                // 系统分隔线贴行左边缘、和标题不对齐 → 隐藏，改由 NoteRow 自己画
+                .listRowSeparator(.hidden, edges: .all)
+                // 与首页列表保持一致的手势：左滑=收藏/删除，右滑=移动。
+                // ⚠️ edge 指动作出现在行的哪一侧 —— `.trailing` = 左滑露出，
+                //    `.leading` = 右滑露出（2026-10-20 首页踩过这个坑，别写反）
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button { Task { await toggleBookmark(n) } } label: {
+                        Label(n.isBookmarked ? "取消收藏" : "收藏",
+                              systemImage: n.isBookmarked ? "star.slash" : "star")
+                    }
+                    .tint(.orange)
+
+                    Button(role: .destructive) { noteToDelete = n } label: {
+                        Label("删除", systemImage: "trash")
+                    }
+                }
+                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    Button { organizeTarget = OrganizeTarget(note: n, action: .move) } label: {
+                        Label("移动", systemImage: "folder")
+                    }
+                    .tint(.blue)
+                }
+                .contextMenu {
+                    Button { Task { await toggleBookmark(n) } } label: {
+                        Label(n.isBookmarked ? "取消收藏" : "收藏",
+                          systemImage: n.isBookmarked ? "star.slash" : "star")
+                    }
+                    Button { organizeTarget = OrganizeTarget(note: n, action: .move) } label: {
+                        Label("移动到…", systemImage: "folder")
+                    }
+                    Button { organizeTarget = OrganizeTarget(note: n, action: .clone) } label: {
+                        Label("克隆到…", systemImage: "square.on.square")
+                    }
+                    Divider()
+                    Button(role: .destructive) { noteToDelete = n } label: {
+                        Label("删除笔记", systemImage: "trash")
+                    }
+                }
+        }
+    }
+
+    /// 非选择态的行：子目录继续下钻，笔记进阅读页
+    @ViewBuilder
+    private func browseLink(for n: Note) -> some View {
+        if n.isContainer {
+            NavigationLink(destination: FolderNotesView(folder: n)) { NoteRow(note: n) }
+        } else {
+            NavigationLink(destination: NoteDetailView(note: n)) { NoteRow(note: n) }
         }
     }
 
@@ -184,6 +259,61 @@ struct FolderNotesView: View {
         selected.removeAll()
         selecting = false
         await load()
+    }
+
+    // MARK: - 单条操作（收藏 / 移动 / 删除）
+
+    /// 收藏 / 取消收藏（写/删一个 bookmarked 标签），写完拉一次列表刷新状态
+    private func toggleBookmark(_ note: Note) async {
+        do {
+            if let aid = note.bookmarkAttributeId {
+                try await ETAPIClient.shared.deleteAttribute(aid)
+                showToast("已取消收藏")
+            } else {
+                try await ETAPIClient.shared.createAttribute(noteId: note.noteId, name: "bookmarked")
+                showToast("已收藏")
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await load()
+        } catch {
+            showToast("操作失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 移动 / 克隆到选定目录
+    private func performOrganize(_ target: OrganizeTarget, to parentId: String, title: String) async {
+        do {
+            switch target.action {
+            case .move:
+                // ⚠️ `from` 必须用**当前目录**（见 moveSelected 里的注释）：
+                //   笔记可能被克隆到多处，first 未必是当前这条分支。
+                try await ETAPIClient.shared.moveNote(target.note.noteId, from: folder.noteId, to: parentId)
+            case .clone:
+                try await ETAPIClient.shared.addBranch(noteId: target.note.noteId, parentNoteId: parentId)
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            showToast("已\(target.action.verb)到「\(title)」")
+            await load()
+        } catch {
+            showToast("操作失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func deleteNote() async {
+        guard let note = noteToDelete else { return }
+        do {
+            try await ETAPIClient.shared.deleteNote(note.noteId)
+            AppLogger.shared.log("已删除笔记: \(note.title)")
+        } catch {
+            // 断网/失败：入离线队列，列表照样移除（联网后补交删除）
+            NoteCache.shared.enqueue(PendingOp(kind: "delete", id: UUID().uuidString,
+                noteId: note.noteId, title: note.title, content: nil, parentNoteId: nil,
+                createdAt: Date()))
+            AppLogger.shared.log("删除已入离线队列: \(note.title)")
+        }
+        NoteCache.shared.remove(note.noteId)
+        notes.removeAll { $0.noteId == note.noteId }
+        noteToDelete = nil
     }
 
     private func showToast(_ text: String) {
