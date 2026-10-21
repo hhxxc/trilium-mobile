@@ -86,6 +86,10 @@ struct NoteListView: View {
     /// 也不会因为上一个请求被 cancel 而让树/列表落占位）
     @State private var inflight: [String: Task<[Note], Error>] = [:]
 
+    /// 底部工具条实际占高（胶囊/＋按钮 44 + 上 8 + 下 4）+ 一点余量。
+    /// 用于列表末尾留白：iOS 15 的 safeAreaInset 不 inset List，只能自己补。
+    private static let bottomBarClearance: CGFloat = 64
+
     private var isSearching: Bool {
         !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
     }
@@ -357,6 +361,17 @@ struct NoteListView: View {
                         }
                     }
                 }
+                // ⚠️ 末尾留白（用户反馈「滑到最下面最后一条被挡住」）：
+                //   iOS 15 的 safeAreaInset 对 **List** 不生效（对 ScrollView 才生效），
+                //   底部胶囊条是 safeAreaInset 画出来的，于是最后一行永远滚不到它上面、
+                //   被压在条下面。给列表末尾补一段等高的空白行兜底，
+                //   这样最后一条笔记一定能滚到工具条上方。
+                //   行分隔线是行内自绘的 Divider，空白行不会拖出多余横线。
+                Color.clear
+                    .frame(height: Self.bottomBarClearance)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
             }
             .listStyle(.plain)
         }
