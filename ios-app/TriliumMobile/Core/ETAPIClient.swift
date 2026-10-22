@@ -260,7 +260,7 @@ struct ETAPIClient {
                 try? await Task.sleep(nanoseconds: UInt64(400_000_000) * UInt64(attempt))
             }
             do {
-                return try await streamContent(id, onProgress: onProgress)
+                return try await downloadContent(id, onProgress: onProgress)
             } catch let e as URLError where e.code == .cancelled {
                 throw e
             } catch let e as APIError {
@@ -274,8 +274,14 @@ struct ETAPIClient {
         throw lastError ?? APIError.invalidResponse
     }
 
-    private func streamContent(_ id: String,
-                               onProgress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> Data {
+    /// 附件下载（流式、带进度）。
+    ///
+    /// ⚠️ 性能（2026-10-22 深度优化）：旧实现是 `for try await byte in bytes` 逐字节消费，
+    ///    一个 25MB 的 PDF 要走 2500 万次 async 迭代（每次都有状态机/跨线程开销），
+    ///    实测比网络本身慢一个数量级。改用 URLSessionDataDelegate 收数据块，
+    ///    速度回到带宽上限，进度/长度校验/取消语义都保留。
+    private func downloadContent(_ id: String,
+                                 onProgress: @escaping @Sendable (Int64, Int64?) -> Void) async throws -> Data {
         guard var comp = URLComponents(url: baseURL.appendingPathComponent("/etapi/notes/\(id)/content"),
                                        resolvingAgainstBaseURL: false) else {
             throw APIError.invalidURL
@@ -285,34 +291,7 @@ struct ETAPIClient {
 
         var req = URLRequest(url: url)
         req.setValue(token, forHTTPHeaderField: "Authorization")
-
-        let (bytes, resp) = try await session.bytes(for: req)
-        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            AppLogger.shared.log("⚠️ 附件下载 HTTP \(http.statusCode)[\(id)]")
-            throw APIError.http(status: http.statusCode)
-        }
-        let total = (resp as? HTTPURLResponse).flatMap {
-            $0.expectedContentLength > 0 ? $0.expectedContentLength : nil
-        }
-
-        var data = Data()
-        data.reserveCapacity(total.map(Int.init) ?? 64 * 1024)
-        var sinceReport: Int64 = 0
-        for try await byte in bytes {
-            data.append(byte)
-            sinceReport += 1
-            if sinceReport >= 64 * 1024 {
-                onProgress(Int64(data.count), total)
-                sinceReport = 0
-            }
-        }
-        // 收够了才算完整：连接被中断时某些情况不报错，只是提前结束
-        if let t = total, data.count != Int(t) {
-            AppLogger.shared.log("⚠️ 附件长度不符[\(id)]：收到 \(data.count) / 应为 \(t)")
-            throw APIError.incomplete(received: data.count, expected: Int(t))
-        }
-        onProgress(Int64(data.count), total)
-        return data
+        return try await AttachmentDownloader(onProgress: onProgress).download(req)
     }
 
     /// 附件下载（笔记的 attachment，如 file 笔记的附件内容）
@@ -625,4 +604,111 @@ extension Notification.Name {
     static let sessionExpired = Notification.Name("trilium.sessionExpired")
     /// 请求退出登录：由 MainView 接收（sheet 持有者）显式关闭面板后再清 token
     static let performLogout = Notification.Name("trilium.performLogout")
+}
+
+/// 附件流式下载器（URLSessionDataDelegate）：数据块直接 append，不做逐字节 async 迭代。
+/// 语义与旧的 bytes 版本一致：非 2xx 抛 `APIError.http`，长度不符抛 `APIError.incomplete`，
+/// 调用方 Task 取消时下载任务一起 cancel。
+private final class AttachmentDownloader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let onProgress: @Sendable (Int64, Int64?) -> Void
+    private var continuation: CheckedContinuation<Data, Error>?
+    private var data = Data()
+    private var expected: Int64 = -1
+    private var statusCode = 0
+    private var gzipped = false
+    private var lastReported = 0
+    private var task: URLSessionDataTask?
+    private var cancelled = false
+    private let lock = NSLock()
+
+    private lazy var session: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 30
+        cfg.timeoutIntervalForResource = 600
+        return URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
+    }()
+
+    init(onProgress: @escaping @Sendable (Int64, Int64?) -> Void) {
+        self.onProgress = onProgress
+        super.init()
+    }
+
+    func download(_ request: URLRequest) async throws -> Data {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data, Error>) in
+                lock.lock()
+                continuation = cont
+                let t = session.dataTask(with: request)
+                task = t
+                let alreadyCancelled = cancelled
+                lock.unlock()
+                if alreadyCancelled { t.cancel() }
+                t.resume()
+            }
+        } onCancel: {
+            lock.lock()
+            cancelled = true
+            let t = task
+            lock.unlock()
+            t?.cancel()
+        }
+    }
+
+    /// 只结算一次（取消与正常完成可能竞争）
+    private func finish(_ result: Result<Data, Error>) {
+        lock.lock()
+        let cont = continuation
+        continuation = nil
+        lock.unlock()
+        guard let cont = cont else { return }
+        session.finishTasksAndInvalidate()   // 断开 session → delegate 的循环引用
+        switch result {
+        case .success(let d): cont.resume(returning: d)
+        case .failure(let e): cont.resume(throwing: e)
+        }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                    didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        if let http = response as? HTTPURLResponse {
+            statusCode = http.statusCode
+            expected = http.expectedContentLength
+            let enc = (http.value(forHTTPHeaderField: "Content-Encoding") ?? "identity").lowercased()
+            gzipped = enc != "identity"
+            if expected > 0, expected < 300 * 1024 * 1024 {
+                data.reserveCapacity(Int(expected))
+            }
+        }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive chunk: Data) {
+        data.append(chunk)
+        if data.count - lastReported >= 64 * 1024 {
+            lastReported = data.count
+            onProgress(Int64(data.count), expected > 0 ? expected : nil)
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            finish(.failure(error))
+            return
+        }
+        if (400..<600).contains(statusCode) {
+            AppLogger.shared.log("⚠️ 附件下载 HTTP \(statusCode)[\(task.originalRequest?.url?.lastPathComponent ?? "?")]")
+            finish(.failure(APIError.http(status: statusCode)))
+            return
+        }
+        // 收够了才算完整：连接被中断时某些情况不报错，只是提前结束。
+        // gzip 时 expected 是压缩后长度，不能直接比（与 raw() 的口径一致）
+        if !gzipped, expected > 0, Int64(data.count) != expected {
+            AppLogger.shared.log("⚠️ 附件长度不符：收到 \(data.count) / 应为 \(expected)")
+            finish(.failure(APIError.incomplete(received: data.count, expected: Int(expected))))
+            return
+        }
+        onProgress(Int64(data.count), expected > 0 ? expected : nil)
+        finish(.success(data))
+    }
 }

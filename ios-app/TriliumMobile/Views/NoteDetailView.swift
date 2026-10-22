@@ -205,8 +205,11 @@ struct NoteDetailView: View {
             .navigationViewStyle(.stack)
         }
         .task {
+            // 正文与同层兄弟并发拉：以前是串行的，打开一条笔记要等「正文返回 → 父标题 → 全部兄弟」
+            // 三串往返都完成，底部条才出来。现在兄弟导航在后台自己加载，正文一到就能读。
+            let siblingTask = Task { @MainActor in await loadSiblings() }
             await load()
-            await loadSiblings()
+            await siblingTask.value
             // file 类型的笔记（PDF/Office/压缩包…）直接打开，不要再让用户多按一次「预览附件」
             if note.type == "file" {
                 await previewFile()
@@ -451,26 +454,75 @@ struct NoteDetailView: View {
     }
 
     /// 拉同层兄弟（底部条上/下篇）+ 父笔记标题（面包屑）。
-    /// 依赖 note.parentNoteIds（搜索接口可能不填充，为空就静默不显示底部条）
+    ///
+    /// ⚠️ 性能（2026-10-22 深度优化）：旧版直接 `childNotes(of:)` 把**整层**子笔记全拉一遍，
+    ///    只为算上一篇/下一篇 —— 50 条的目录就是 1 + 50 个请求（每批 6 个并发），
+    ///    大目录打开一条笔记要转好几秒，白白耗流量和电。
+    ///    现在先用父笔记的 childNoteIds 定位下标，只取**相邻两条**，请求数固定为 3。
     private func loadSiblings() async {
         isLoadingSiblings = true
         defer { isLoadingSiblings = false }
         guard let pid = note.parentNoteIds?.first else { return }
         do {
-            parentTitle = try await ETAPIClient.shared.getNote(pid).title
-        } catch {
-            AppLogger.shared.log("面包屑父标题加载失败[\(note.title)]: \(error.localizedDescription)")
-        }
-        do {
-            siblings = try await ETAPIClient.shared.childNotes(of: pid)
+            let parent = try await ETAPIClient.shared.getNote(pid)
+            parentTitle = parent.title
+            let ids = (parent.childNoteIds ?? []).filter { !$0.hasPrefix("_") }
+            guard let i = ids.firstIndex(of: note.noteId) else {
+                siblings = []
+                return
+            }
+            // 相邻两条并发取；当前 note 本身放回列表中间，prevSibling/nextSibling 的下标逻辑不变
+            async let prev: Note? = fetchSibling(ids, i - 1)
+            async let next: Note? = fetchSibling(ids, i + 1)
+            var list: [Note] = []
+            if let p = await prev { list.append(p) }
+            list.append(note)
+            if let n = await next { list.append(n) }
+            siblings = list
         } catch {
             AppLogger.shared.log("上下篇兄弟加载失败[\(note.title)]: \(error.localizedDescription)")
         }
     }
 
-    /// force=true：跳过缓存直拉网络（编辑保存后必须用，否则读到旧缓存）
+    /// 取同层第 idx 条（越界返回 nil）
+    private func fetchSibling(_ ids: [String], _ idx: Int) async -> Note? {
+        guard ids.indices.contains(idx) else { return nil }
+        return try? await ETAPIClient.shared.getNote(ids[idx])
+    }
+
+    /// 加载正文：缓存先上屏（秒开）+ 网络静默刷新（拿到最新就替换）。
+    /// force=true：跳过缓存直拉网络（编辑保存后必须用，否则读到旧缓存）。
+    ///
+    /// ⚠️ 2026-10-22 深度优化：旧版缓存命中就直接 return，**永远不打网络** ——
+    ///    桌面端改过的笔记，在手机上会一直显示旧内容，直到用户手动去编辑一次。
+    ///    现在是缓存优先渲染 + 后台比对刷新，打开速度和内容新鲜度都要。
     private func load(force: Bool = false) async {
-        if !force { loading = true } // 静默刷新不置 loading，保留屏上旧内容
+        if !force { loading = true }
+
+        // 1. 缓存先上屏
+        var servedFromCache = false
+        if !force {
+            switch note.type {
+            case "image":
+                if let cached = NoteCache.shared.loadBlob(note.noteId) {
+                    imageData = cached
+                    servedFromCache = true
+                }
+            case "text", "code", "render":
+                if let cached = NoteCache.shared.loadContent(note.noteId) {
+                    textContent = cached
+                    servedFromCache = true
+                }
+            default:
+                break
+            }
+            if servedFromCache {
+                hasLoadedOnce = true
+                loading = false
+            }
+        }
+
+        // 2. 网络刷新（缓存命中时静默：不闪 loading，失败保留屏上内容）
         do {
             if force {
                 // 顺带拉最新元数据：编辑器里改过标题/类型时同步显示
@@ -480,19 +532,14 @@ struct NoteDetailView: View {
             }
             switch note.type {
             case "image":
-                if !force, let cached = NoteCache.shared.loadBlob(note.noteId) {
-                    imageData = cached
-                } else {
-                    // 不 try? 吞错：失败让它抛到下面 catch，记日志 + 显示错误
-                    let data = try await ETAPIClient.shared.getContentData(note.noteId)
-                    imageData = data
-                    NoteCache.shared.saveBlob(note.noteId, data: data)
-                }
+                // 不 try? 吞错：失败让它抛到下面 catch，记日志 + 显示错误
+                let data = try await ETAPIClient.shared.getContentData(note.noteId)
+                imageData = data
+                NoteCache.shared.saveBlob(note.noteId, data: data)
             case "text", "code", "render":
-                if !force, let cached = NoteCache.shared.loadContent(note.noteId) {
-                    textContent = cached
-                } else {
-                    let raw = try await ETAPIClient.shared.getContent(note.noteId)
+                let raw = try await ETAPIClient.shared.getContent(note.noteId)
+                // 内容没变就不改 state（避免无意义的 body 重算 + WebView 重新比对）
+                if textContent != raw {
                     textContent = raw
                     NoteCache.shared.saveContent(note.noteId, text: raw)
                 }
@@ -501,9 +548,9 @@ struct NoteDetailView: View {
             }
             errorMsg = ""
         } catch {
-            // 静默刷新失败且屏上已有内容：不打断阅读，只记日志
+            // 屏上已有内容（来自缓存或上次加载）：不打断阅读，只记日志
             let hasContent = !textContent.isEmpty || imageData != nil
-            if !(force && hasContent) {
+            if !hasContent {
                 errorMsg = "加载失败：\(error.localizedDescription)"
             }
             AppLogger.shared.log("阅读[\(note.title)]加载失败: \(error.localizedDescription)")

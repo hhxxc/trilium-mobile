@@ -3,25 +3,27 @@ import SwiftUI
 /// 根视图：未登录 → 登录页；已登录 → 主界面（列表优先，有道云风格）。
 /// 监听会话过期通知（服务端重启导致 token 失效），自动踢回登录页。
 ///
-/// ⚠️ 登录态校验（2026-10-17 加固）：
-///   ETAPI token 存 UserDefaults，同 Bundle ID 覆盖安装会残留旧 token；
-///   且 token 会随服务端重启失效。故启动时**必须用 token 实测一次**，
-///   有效才进主界面，否则清 token 回登录页 —— 不能只看本地有没有 token 值。
+/// ⚠️ 登录态校验（2026-10-22 改为「后台校验」）：
+///   ETAPI token 会随服务端重启失效，必须实测一次；但**不能拿它挡首屏**——
+///   现在是本地有 token 立刻进主界面（缓存优先），校验异步跑，只有明确 401 才清 token 回登录页。
+///   网络/证书错误一律保留登录态（否则穿透证书一过期，用户就被无故登出）。
 struct RootView: View {
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.scenePhase) private var scenePhase
-    @State private var validating = true
-    /// 生物识别锁：进后台即锁，回前台需认证（设置页可开关）
-    @State private var isLocked = false
+    /// 生物识别锁：进后台即锁，回前台需认证（设置页可开关）。
+    /// ⚠️ 初值直接取持久化开关：冷启动第一帧就得上锁，不能等 .task 跑起来
+    ///    —— 否则开着锁的用户会先看到一帧正文（缓存优先渲染后的隐私泄露）。
+    @State private var isLocked = AppSettings.shared.lockEnabled
     /// 上次认证失败的原因（展示在锁定遮罩上，别让用户对着屏幕猜）
     @State private var authError: String?
 
     var body: some View {
         Group {
-            if validating {
-                ProgressView("校验登录…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if settings.isLoggedIn {
+            // ⚠️ 启动不再等网络：以前这里有个 validating 全屏「校验登录…」，
+            //    要等 ServerProbe(最多 4s) + getNote(root) 两个往返，慢隧道下白屏好几秒。
+            //    现在直接用本地登录态进主界面（列表命中磁盘缓存，见 NoteListView 的
+            //    stale-while-revalidate），token 校验挪到后台，只有明确 401 才踢回登录页。
+            if settings.isLoggedIn {
                 MainView()
             } else {
                 LoginView()
@@ -37,14 +39,15 @@ struct RootView: View {
             settings.logout()
         }
         .task {
-            // 先自愈连接：公网证书过期 / 出门回家换网时，主备地址自动互换
-            if settings.isLoggedIn { await ServerProbe.ensureReachable() }
-            await validateToken()
-            // 冷启动也要上锁：以前只有「切过后台」才锁，重新打开 App 是不验的
-            if settings.lockEnabled {
-                isLocked = true
-                authenticate()
+            // 连接自愈 + token 校验放后台：两者都要打网络，不能挡住首屏
+            if settings.isLoggedIn {
+                Task { @MainActor in
+                    await ServerProbe.ensureReachable()
+                    await validateToken()
+                }
             }
+            // 冷启动也要上锁：以前只有「切过后台」才锁，重新打开 App 是不验的
+            if settings.lockEnabled { authenticate() }
             // 启动补交离线积压（有网才成功，失败留队列）
             await NoteCache.shared.flushPendingOps()
             // 启动即静默检查更新：有新版直接在后台下，不弹任何东西
@@ -54,13 +57,12 @@ struct RootView: View {
         }
         // 进后台立即上锁（锁屏/切走都算）；回前台弹认证 + 补交离线积压
         .onChange(of: scenePhase) { phase in
-            // ⚠️ 进后台的戳**不能**被 validating 挡掉：那时「进后台」是既成事实，
+            // ⚠️ 进后台的戳**不能**被任何门禁挡掉：那时「进后台」是既成事实，
             //    不打戳 → 下次启动一律误报「疑似闪退」（2026-10-20 修）。
-            //    validating 只挡「回前台弹认证」这类交互，不挡记录。
             if phase == .background {
                 CrashBreadcrumb.markBackground()
+                AppLogger.shared.flush()   // 日志落盘（平时是合并写，防拖慢主线程）
             }
-            guard !validating else { return }
             if phase == .background {
                 if settings.lockEnabled { isLocked = true }
             } else if phase == .active {
@@ -133,7 +135,6 @@ struct RootView: View {
     /// ⚠️ 网络故障 / TLS 证书过期 / 服务端临时不可用 一律**保留登录态**，
     ///    先进主界面走本地缓存 —— 否则穿透证书一过期，用户就被无故登出（实测踩过）。
     private func validateToken() async {
-        defer { validating = false }
         guard settings.isLoggedIn else {
             AppLogger.shared.log("启动校验：无 token，直接进登录页")
             return

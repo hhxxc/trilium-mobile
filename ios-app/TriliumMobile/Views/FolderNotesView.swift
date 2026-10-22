@@ -293,6 +293,7 @@ struct FolderNotesView: View {
             }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             showToast("已\(target.action.verb)到「\(title)」")
+            TreeChildCache.clear()   // 树结构变了，目录子级缓存作废
             await load()
         } catch {
             showToast("操作失败：\(error.localizedDescription)")
@@ -313,6 +314,7 @@ struct FolderNotesView: View {
         }
         NoteCache.shared.remove(note.noteId)
         notes.removeAll { $0.noteId == note.noteId }
+        TreeChildCache.clear()
         noteToDelete = nil
     }
 

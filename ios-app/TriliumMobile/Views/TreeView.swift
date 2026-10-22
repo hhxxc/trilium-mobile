@@ -77,6 +77,13 @@ struct TreeView: View {
     }
 
     private func loadRoot() async {
+        // 命中缓存直接秒开（抽屉/目录页来回切不再转圈）
+        if let cached = TreeChildCache.get("root") {
+            rootChildren = cached
+            loading = false
+            errorMsg = ""
+            return
+        }
         loading = true
         errorMsg = ""
         // 请求与 12 秒超时竞速：无论服务端多慢，界面都不会无限转圈
@@ -100,6 +107,7 @@ struct TreeView: View {
         switch outcome {
         case .ok(let list):
             rootChildren = list
+            TreeChildCache.set("root", list)
             AppLogger.shared.log("目录加载完成：\(list.count) 项")
         case .failed(let msg):
             errorMsg = "加载失败：\(msg)"
@@ -114,19 +122,60 @@ struct TreeView: View {
 
 /// 树节点展开状态持久化：记住展开过的目录，下次进来直接还原
 /// （深目录用户最需要——每次进 App 重新点开三层文件夹很烦）
+///
+/// ⚠️ 性能（2026-10-22 深度优化）：旧版每次 `load()` 都读 UserDefaults + 建 Set，
+///    而每个 TreeNodeView 初始化都会调一次 —— 一屏 30 个节点就是 30 次 plist 解析。
+///    现在首次读一次进内存，之后只在展开/收起时合并写盘（0.4s 防抖）。
 enum TreeExpandedStore {
     private static let key = "trilium.treeExpandedIds"
+    private static var cache: Set<String>?
+    private static var saveWork: DispatchWorkItem?
 
     static func load() -> Set<String> {
-        Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+        if let c = cache { return c }
+        let s = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+        cache = s
+        return s
     }
 
     static func set(_ noteId: String, expanded: Bool) {
         var s = load()
         if expanded { s.insert(noteId) } else { s.remove(noteId) }
         // 上限 200 条，防无限增长
-        let arr = Array(s.prefix(200))
-        UserDefaults.standard.set(arr, forKey: key)
+        if s.count > 200 { s = Set(s.prefix(200)) }
+        cache = s
+        saveWork?.cancel()
+        let snapshot = Array(s)
+        let work = DispatchWorkItem { UserDefaults.standard.set(snapshot, forKey: key) }
+        saveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+}
+
+/// 目录子级内存缓存：树展开一次要打 1 + N 个请求（父笔记 + 逐个子笔记详情），
+/// 抽屉/目录页来回切时如果每次重拉，用户看到的就是反复转圈。
+/// 30s TTL + 移动/删除后显式 clear，兼顾「快」和「不显示旧结构」。
+enum TreeChildCache {
+    private static var store: [String: (notes: [Note], at: Date)] = [:]
+    private static let lock = NSLock()
+    private static let ttl: TimeInterval = 30
+
+    static func get(_ parentId: String) -> [Note]? {
+        lock.lock(); defer { lock.unlock() }
+        guard let hit = store[parentId],
+              Date().timeIntervalSince(hit.at) < ttl else { return nil }
+        return hit.notes
+    }
+
+    static func set(_ parentId: String, _ notes: [Note]) {
+        lock.lock(); defer { lock.unlock() }
+        store[parentId] = (notes, Date())
+    }
+
+    /// 结构变了（移动/删除/新建）→ 整棵树的子级缓存作废
+    static func clear() {
+        lock.lock(); defer { lock.unlock() }
+        store.removeAll()
     }
 }
 
@@ -272,9 +321,15 @@ struct TreeNodeView: View {
     }
 
     private func loadChildren() async {
+        if let cached = TreeChildCache.get(note.noteId) {
+            children = cached
+            return
+        }
         isLoadingChildren = true
         do {
-            children = try await ETAPIClient.shared.childNotes(of: note.noteId)
+            let list = try await ETAPIClient.shared.childNotes(of: note.noteId)
+            children = list
+            TreeChildCache.set(note.noteId, list)
         } catch {
             children = []
             AppLogger.shared.log("展开[\(note.title)]失败: \(error.localizedDescription)")

@@ -26,6 +26,22 @@ final class NoteCache {
     /// 超出后按最后修改时间从最旧的文件开始删。
     private static let maxCacheBytes: Int64 = 200 * 1024 * 1024
 
+    /// 磁盘 IO 专用串行队列：大附件写盘、容量淘汰都在这里做，别占主线程。
+    /// ⚠️ 淘汰会删文件，必须和写盘串行，否则可能删到刚写一半的文件。
+    private let ioQueue = DispatchQueue(label: "trilium.note-cache.io", qos: .utility)
+
+    /// 上次容量巡检时间 + 锁（写盘很频繁，不能每次都全目录枚举）
+    private var lastPruneAt = Date.distantPast
+    private let pruneLock = NSLock()
+
+    /// 二进制内存缓存：刚存过的附件（尤其图片）再从磁盘读一遍纯属浪费；
+    /// 也覆盖了「写盘改异步后，立刻 loadBlob 读不到」的窗口。
+    private let blobCache: NSCache<NSString, NSData> = {
+        let c = NSCache<NSString, NSData>()
+        c.totalCostLimit = 64 * 1024 * 1024
+        return c
+    }()
+
     // MARK: - 元数据
 
     private var metaURL: URL { root.appendingPathComponent("notes.json") }
@@ -52,7 +68,7 @@ final class NoteCache {
         try? text.write(to: contentURL(noteId), atomically: true, encoding: .utf8)
         // 内容变了，列表摘要缓存要失效（否则编辑器改完回列表还是旧摘要）
         summaryCache.removeObject(forKey: noteId as NSString)
-        pruneIfNeeded()
+        schedulePrune()
     }
 
     func loadContent(_ noteId: String) -> String? {
@@ -80,12 +96,32 @@ final class NoteCache {
     }
 
     func saveBlob(_ noteId: String, data: Data) {
-        try? data.write(to: blobURL(noteId))
-        pruneIfNeeded()
+        // 先放内存：调用方紧接着可能 loadBlob（图片笔记首屏），不落一次磁盘
+        blobCache.setObject(data as NSData, forKey: noteId as NSString, cost: data.count)
+        // 大附件写盘（几十 MB）别占主线程 —— 以前同步写，下载完那一下会明显卡顿
+        ioQueue.async { [weak self] in
+            guard let self = self else { return }
+            try? data.write(to: self.blobURL(noteId))
+            self.pruneIfNeeded()
+        }
+    }
+
+    /// 容量巡检节流：最多 60s 一次，且整体挪到 IO 队列。
+    /// ⚠️ 旧版每次写盘都同步枚举整个缓存目录，笔记一多就是主线程上的几十毫秒 IO。
+    private func schedulePrune() {
+        pruneLock.lock()
+        let now = Date()
+        guard now.timeIntervalSince(lastPruneAt) > 60 else {
+            pruneLock.unlock()
+            return
+        }
+        lastPruneAt = now
+        pruneLock.unlock()
+        ioQueue.async { [weak self] in self?.pruneIfNeeded() }
     }
 
     /// 超出容量上限时，把 content 和 blob 里最旧的文件删掉，直到回到阈值以下。
-    /// 只在写入后调用；文件量小（几十条笔记 + 少量附件），枚举开销可忽略。
+    /// 只在 IO 队列上调用（写盘后），枚举开销不占主线程。
     private func pruneIfNeeded() {
         let max = Self.maxCacheBytes
         guard max > 0 else { return }
@@ -108,10 +144,14 @@ final class NoteCache {
         var removed: Int64 = 0
         for f in files {
             guard remaining > max else { break }
+            // 别把「当前正在用的元数据」删了：notes.json 是离线列表的命根子
+            if f.url.lastPathComponent == "notes.json" { continue }
             do {
                 try fm.removeItem(at: f.url)
                 remaining -= f.size
                 removed += f.size
+                // 磁盘删了，内存里那份也要清（否则点开又「有缓存」，其实已经没了）
+                blobCache.removeObject(forKey: f.url.lastPathComponent as NSString)
             } catch {
                 AppLogger.shared.log("缓存淘汰删除失败 \(f.url.lastPathComponent): \(error.localizedDescription)")
             }
@@ -122,16 +162,25 @@ final class NoteCache {
     }
 
     func loadBlob(_ noteId: String) -> Data? {
-        try? Data(contentsOf: blobURL(noteId))
+        if let hit = blobCache.object(forKey: noteId as NSString) { return hit as Data }
+        guard let data = try? Data(contentsOf: blobURL(noteId)) else { return nil }
+        // 回填内存缓存（读过的附件不再反复读盘）
+        blobCache.setObject(data as NSData, forKey: noteId as NSString, cost: data.count)
+        return data
     }
 
     // MARK: - 单笔记清理
 
     /// 删除笔记后清掉它的本地缓存（内容 + 二进制）
     func remove(_ noteId: String) {
-        try? fm.removeItem(at: contentURL(noteId))
-        try? fm.removeItem(at: blobURL(noteId))
+        blobCache.removeObject(forKey: noteId as NSString)
         summaryCache.removeObject(forKey: noteId as NSString)
+        // 走 IO 队列：和 saveBlob 的异步写串行，避免「刚删完又被写回来」
+        ioQueue.async { [weak self] in
+            guard let self = self else { return }
+            try? self.fm.removeItem(at: self.contentURL(noteId))
+            try? self.fm.removeItem(at: self.blobURL(noteId))
+        }
     }
 
     /// 缓存目录总字节数（设置页展示用）
@@ -148,10 +197,14 @@ final class NoteCache {
     // MARK: - 清理
 
     func clearAll() {
-        try? fm.removeItem(at: root)
-        try? fm.createDirectory(at: contentDir, withIntermediateDirectories: true)
-        try? fm.createDirectory(at: blobDir, withIntermediateDirectories: true)
+        // 与 IO 队列串行：等正在写的大附件落完再清，否则清完又被写回来
+        ioQueue.sync {
+            try? fm.removeItem(at: root)
+            try? fm.createDirectory(at: contentDir, withIntermediateDirectories: true)
+            try? fm.createDirectory(at: blobDir, withIntermediateDirectories: true)
+        }
         summaryCache.removeAllObjects()
+        blobCache.removeAllObjects()
         // 缓存清了，待同步操作必须保留（是真实数据不是缓存）
         if !pendingOps.isEmpty {
             UserDefaults.standard.set(try? JSONEncoder().encode(pendingOps), forKey: Self.pendingKey)

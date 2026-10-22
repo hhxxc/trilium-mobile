@@ -95,9 +95,17 @@ struct NoteListView: View {
     /// 按 loadKey 缓存列表结果：切 tab 回来直接用，不再重打网络。
     /// ⚠️ 2026-10-20 日志实证：8 秒内最近/目录/收藏同一批数据被拉了 5 次。
     @State private var listCache: [String: [Note]] = [:]
+    /// 每份缓存的时间戳：缓存先上屏，超过 TTL 再后台静默刷新（stale-while-revalidate）
+    @State private var listCacheTime: [String: Date] = [:]
+    /// 正在后台刷新的 key：同一个 key 不叠加多个请求
+    @State private var revalidating: Set<String> = []
     /// 同一个 key 正在进行中的请求（并发去重：切 tab 手快时不会重复打网络，
     /// 也不会因为上一个请求被 cancel 而让树/列表落占位）
     @State private var inflight: [String: Task<[Note], Error>] = [:]
+
+    /// 缓存视为「还算新」的时长：30s 内切 tab 不再打网络，超过就静默刷一次。
+    /// 用户看到的永远是「秒开 + 自己更新」，不用下拉刷新也能拿到最新列表。
+    private static let cacheTTL: TimeInterval = 30
 
     /// 底部工具条实际占高（胶囊/＋按钮 44 + 上 8 + 下 4）+ 一点余量。
     /// 用于列表末尾留白：iOS 15 的 safeAreaInset 不 inset List，只能自己补。
@@ -225,7 +233,10 @@ struct NoteListView: View {
             }
         }
         .sheet(isPresented: $showCompose) {
-            ComposeView(onSaved: { await reload() })
+            ComposeView(onSaved: {
+                TreeChildCache.clear()   // 新笔记进了收件箱，目录子级缓存作废
+                await reload()
+            })
         }
         .sheet(isPresented: $showUpdatePage) {
             NavigationView { UpdateView() }
@@ -721,15 +732,29 @@ struct NoteListView: View {
         if !force, let c = listCache[key] {
             notes = c
             loading = false
+            errorMsg = ""   // 有缓存就别再挂着上一次的失败提示
+            // 超时就不动声色地拉一次最新（不闪 loading、失败也不打扰用户）
+            let age = Date().timeIntervalSince(listCacheTime[key] ?? .distantPast)
+            if age > Self.cacheTTL {
+                Task { @MainActor in await revalidate(key: key, query: q) }
+            }
             return
         }
         loading = true
+        // 冷启动首屏：内存缓存是空的（App 刚起来），磁盘里还有上次的列表 →
+        // 先把它铺上去，网络结果回来再替换。以前这里必闪一屏骨架，其实数据一直都在。
+        if !force, notes.isEmpty, browseMode == .recent, q.isEmpty,
+           let disk = NoteCache.shared.loadRecentNotes(), !disk.isEmpty {
+            notes = disk
+        }
         loadGeneration += 1
         let gen = loadGeneration
         do {
             let result = try await fetchList(key: key, query: q, force: force)
             guard gen == loadGeneration else { return }
             notes = result
+            listCache[key] = result
+            listCacheTime[key] = Date()
             if !q.isEmpty && !result.isEmpty {
                 recordSearch(q)
             }
@@ -802,9 +827,36 @@ struct NoteListView: View {
         }
     }
 
+    /// 后台静默刷新：屏上已有缓存，成功就悄悄换掉，失败保持原样（只记日志）。
+    /// 和 load() 的区别：不置 loading、不弹错误、不更新代数（不打断用户当前操作）。
+    private func revalidate(key: String, query q: String) async {
+        guard !revalidating.contains(key) else { return }
+        revalidating.insert(key)
+        defer { revalidating.remove(key) }
+        do {
+            let result = try await fetchList(key: key, query: q, force: true)
+            // 用户已经切到别的 tab / 改了搜索词 → 结果作废（但缓存本身仍有用）
+            listCache[key] = result
+            listCacheTime[key] = Date()
+            guard loadKey == key else { return }
+            notes = result
+            errorMsg = ""
+            AppLogger.shared.log("列表后台刷新：\(result.count) 条（\(browseMode.title)）")
+        } catch {
+            // 标记「刚试过」，避免每次切 tab 都对着不可达的服务器重试
+            listCacheTime[key] = Date()
+            let ns = error as NSError
+            if !(ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled) {
+                AppLogger.shared.log("列表后台刷新失败（保留缓存）: \(error.localizedDescription)")
+            }
+        }
+    }
+
     /// 让缓存失效（新建/删除/移动/改标题之后必须调，否则用户看不到变化）
     private func invalidateListCache() {
         listCache.removeAll()
+        listCacheTime.removeAll()
+        revalidating.removeAll()
     }
 
     /// 数据变了要看到最新：清缓存再拉。
@@ -841,6 +893,8 @@ struct NoteListView: View {
         }
         NoteCache.shared.remove(note.noteId)
         notes.removeAll { $0.noteId == note.noteId }
+        // 目录树少了一条 → 子级缓存作废
+        TreeChildCache.clear()
         // ⚠️ 列表缓存里还有这条（收藏/搜索等别的 key 里也可能有），不清的话
         //    切个 tab 回来它又冒出来了（2026-10-20 加缓存时补的）
         invalidateListCache()
@@ -879,6 +933,7 @@ struct NoteListView: View {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             showToast("已\(target.action.verb)到「\(title)」")
             AppLogger.shared.log("\(target.action.verb)笔记[\(target.note.title)] → \(title)")
+            TreeChildCache.clear()   // 树结构变了
             await reload()
         } catch {
             showToast("\(target.action.verb)失败：\(error.localizedDescription)")
