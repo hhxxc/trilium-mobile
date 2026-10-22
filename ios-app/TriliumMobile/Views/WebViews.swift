@@ -32,6 +32,9 @@ struct ContentWebView: UIViewRepresentable {
         var hasRestored = false
         var lastSaveTime: TimeInterval = 0
         var lastJump: Int?
+        /// 重载 HTML（改字号/内容变化）前记下滚动位置，加载完回到原处。
+        /// 不记的话，切一次字号整篇就跳回顶部，长文阅读体验很差。
+        var reloadRestoreY: CGFloat?
         weak var webView: WKWebView?
 
         init(noteId: String, onOpenNote: ((String) -> Void)?, onOutline: (([OutlineItem]) -> Void)?) {
@@ -149,6 +152,16 @@ struct ContentWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            // 重载（改字号 / 正文刷新）后的位置恢复：优先于「首次进入恢复上次进度」
+            if let y = reloadRestoreY {
+                reloadRestoreY = nil
+                hasRestored = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak webView] in
+                    guard let sv = webView?.scrollView, sv.contentSize.height > sv.frame.height else { return }
+                    sv.setContentOffset(CGPoint(x: 0, y: min(y, sv.contentSize.height - sv.frame.height)), animated: false)
+                }
+                return
+            }
             // 首次加载完成：恢复上次的阅读位置（需等内容布局出高度）
             guard !hasRestored, !noteId.isEmpty else { return }
             hasRestored = true
@@ -210,6 +223,9 @@ struct ContentWebView: UIViewRepresentable {
                 completionHandler: nil)
         }
         guard context.coordinator.lastHTML != html else { return }
+        // 只有「已经完成首次排版」后才记位置：首屏那次加载要走正常的阅读进度恢复
+        context.coordinator.reloadRestoreY = context.coordinator.hasRestored
+            ? uiView.scrollView.contentOffset.y : nil
         context.coordinator.lastHTML = html
         uiView.loadHTMLString(html, baseURL: AppSettings.shared.serverURL)
     }

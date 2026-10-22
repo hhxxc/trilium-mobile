@@ -87,8 +87,16 @@ struct RootView: View {
                   let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
                   let text = comps.queryItems?.first(where: { $0.name == "text" })?.value,
                   !text.isEmpty else { return }
+            // 整段分享文字直接当标题，会得到一条「几千字的标题」，列表里没法看：
+            // 首行（≤60 字）当标题，全文转成 HTML 进正文（以前正文直接丢）
+            let firstLine = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
+                .first.map(String.init) ?? text
+            var noteTitle = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if noteTitle.count > 60 { noteTitle = String(noteTitle.prefix(60)) }
+            if noteTitle.isEmpty { noteTitle = ComposeView.defaultDateTitle() }
             NoteCache.shared.enqueue(PendingOp(kind: "create", id: UUID().uuidString,
-                noteId: "", title: text, content: nil, parentNoteId: nil, createdAt: Date()))
+                noteId: "", title: noteTitle, content: ComposeView.html(fromPlain: text),
+                noteType: "text", parentNoteId: nil, createdAt: Date()))
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             AppLogger.shared.log("分享收藏已入队：\(text.prefix(30))…")
             if settings.isLoggedIn {

@@ -51,6 +51,11 @@ final class NoteCache {
     let pendingLock = NSLock()
     var pendingCache: [PendingOp]?
 
+    /// 补交互斥：RootView 启动 / 回前台 / 编辑器保存后补交 / 分享回传，
+    /// 四个入口都可能同时触发 flush。并发跑会把同一条 create 提交两次（重复笔记）。
+    let flushLock = NSLock()
+    var isFlushing = false
+
     // MARK: - 元数据
 
     private var metaURL: URL { root.appendingPathComponent("notes.json") }
@@ -334,6 +339,20 @@ extension NoteCache {
     /// 返回是否全部清空。
     @discardableResult
     func flushPendingOps() async -> Bool {
+        // 已有补交在跑：直接返回（不排队、不重复提交）
+        flushLock.lock()
+        if isFlushing {
+            flushLock.unlock()
+            return false
+        }
+        isFlushing = true
+        flushLock.unlock()
+        defer {
+            flushLock.lock()
+            isFlushing = false
+            flushLock.unlock()
+        }
+
         var list = pendingOps
         guard !list.isEmpty else { return true }
         var idx = 0

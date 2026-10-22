@@ -369,16 +369,12 @@ struct NoteDetailView: View {
             .appendingPathComponent("TriliumAttachments", isDirectory: true)
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
 
+        // ⚠️ 文件名必须带 noteId：两篇同名附件（比如都叫「报告」）原来会落到同一个
+        //    缓存路径，点开 B 看到的是 A 的内容。旧缓存不再复用（各重下一份）。
         let ext = Self.fileExtension(mime: note.mime, name: base)
-        let fileName = ext.isEmpty ? base : "\(base).\(ext)"
+        let stem = "\(base)-\(note.noteId)"
+        let fileName = ext.isEmpty ? stem : "\(stem).\(ext)"
         let url = cacheDir.appendingPathComponent(fileName)
-
-        // 兼容旧缓存：以前不带扩展名，QuickLook 认不出来 → 直接改名复用，不重新下 25MB
-        let legacyURL = cacheDir.appendingPathComponent(base)
-        if url != legacyURL, FileManager.default.fileExists(atPath: legacyURL.path),
-           !FileManager.default.fileExists(atPath: url.path) {
-            try? FileManager.default.moveItem(at: legacyURL, to: url)
-        }
 
         // 1. 已缓存 → 秒开
         if FileManager.default.fileExists(atPath: url.path) {
@@ -405,7 +401,7 @@ struct NoteDetailView: View {
             // mime 也不认识时，用文件头兜底判断类型（PDF / 图片 / zip 系）
             var finalURL = url
             if ext.isEmpty, let sniffed = Self.sniffExtension(data) {
-                finalURL = cacheDir.appendingPathComponent("\(base).\(sniffed)")
+                finalURL = cacheDir.appendingPathComponent("\(stem).\(sniffed)")
             }
             try data.write(to: finalURL, options: .atomic) // 原子写，防中断留半截文件被误判为缓存
             NoteCache.shared.saveBlob(note.noteId, data: data)
@@ -616,6 +612,7 @@ struct NativeEditorView: View {
     /// 进入编辑时服务端的版本戳（保存前拿它比对，别处改过就先问用户再写）
     @State private var baseStamp: String?
     @State private var showConflict = false
+    @State private var showDiscard = false
     @State private var loadingServer = false
 
     var body: some View {
@@ -652,9 +649,17 @@ struct NativeEditorView: View {
             }
             .navigationTitle("编辑")
             .navigationBarTitleDisplayMode(.inline)
+            // 有改动时禁掉下滑关闭：那条路径不弹确认，一滑就把改动丢了
+            .interactiveDismissDisabled(titleChanged || contentChanged)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+                    Button("取消") {
+                        if titleChanged || contentChanged {
+                            showDiscard = true
+                        } else {
+                            dismiss()
+                        }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") { save() }.disabled(saving)
@@ -676,6 +681,11 @@ struct NativeEditorView: View {
                 Button("取消", role: .cancel) {}
             } message: {
                 Text("你编辑期间这篇笔记在别处（桌面端/网页）被改过。直接保存会覆盖对方的改动。")
+            }
+            // 取消且有改动 → 二次确认，别让手滑白写
+            .confirmationDialog("放弃未保存的修改？", isPresented: $showDiscard, titleVisibility: .visible) {
+                Button("放弃修改", role: .destructive) { dismiss() }
+                Button("继续编辑", role: .cancel) {}
             }
         }
     }

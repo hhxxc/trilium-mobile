@@ -65,4 +65,35 @@ final class PureFunctionTests: XCTestCase {
     func testSniffUnknown() {
         XCTAssertNil(NoteDetailView.sniffExtension(Data([0x00, 0x01, 0x02])))
     }
+
+    // MARK: - PendingOp 向后兼容（老版本队列缺 noteType/baseStamp/conflicted）
+
+    func testPendingOpDecodesLegacyJSON() throws {
+        let json = """
+        [{"kind":"putContent","id":"1","noteId":"abc","title":"t","content":"c","createdAt":0}]
+        """.data(using: .utf8)!
+        let ops = try JSONDecoder().decode([PendingOp].self, from: json)
+        XCTAssertEqual(ops.count, 1)
+        XCTAssertNil(ops[0].noteType)      // 老队列没有这个键，必须是 nil 而不是抛错
+        XCTAssertFalse(ops[0].conflicted)
+    }
+
+    func testPendingOpRoundTripsCreateWithBody() throws {
+        let op = PendingOp(kind: "create", id: "2", noteId: "", title: "标题",
+                           content: "<p>正文</p>", noteType: "text", parentNoteId: "inbox")
+        let data = try JSONEncoder().encode(op)
+        let back = try JSONDecoder().decode(PendingOp.self, from: data)
+        XCTAssertEqual(back.content, "<p>正文</p>")
+        XCTAssertEqual(back.noteType, "text")
+        XCTAssertEqual(back.parentNoteId, "inbox")
+    }
+
+    // MARK: - 阅读页 HTML 增强脚本（2026-10-22 前 <script> 未闭合，整段 JS 语法错误）
+
+    func testWrappedHTMLHasBalancedScriptTags() {
+        let html = NoteHTML.wrap(title: "t", raw: "<p>x</p>", noteType: "text")
+        let opens = html.components(separatedBy: "<script").count - 1
+        let closes = html.components(separatedBy: "</script>").count - 1
+        XCTAssertEqual(opens, closes, "增强脚本里 <script> 与 </script> 必须成对，否则整段不执行")
+    }
 }

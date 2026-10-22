@@ -1,6 +1,45 @@
 import SwiftUI
 import UIKit
 
+/// 新建页草稿：打字过程中自动存一份到 UserDefaults，崩溃/被系统杀掉后回来还能捡回。
+/// 只保留 72 小时内、正文非空的草稿；保存成功或明确丢弃即清。
+enum ComposeDraftStore {
+    private static let key = "trilium.composeDraft"
+
+    struct Draft: Codable {
+        let title: String
+        let text: String
+        let noteType: String
+        let targetId: String?
+        let targetName: String
+        let savedAt: Date
+    }
+
+    static func save(title: String, text: String, noteType: String,
+                     targetId: String?, targetName: String) {
+        let d = Draft(title: title, text: text, noteType: noteType,
+                      targetId: targetId, targetName: targetName, savedAt: Date())
+        if let data = try? JSONEncoder().encode(d) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    static func load() -> Draft? {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let d = try? JSONDecoder().decode(Draft.self, from: data) else { return nil }
+        // 太老的草稿不恢复（用户多半早忘了，突然冒出来反而吓人）
+        guard Date().timeIntervalSince(d.savedAt) < 72 * 3600 else {
+            clear()
+            return nil
+        }
+        return d.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : d
+    }
+
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+}
+
 /// 新建笔记（版式仿用户参考截图：日期当标题 + 面包屑选目录 + 保存做底部主按钮）：
 /// 头部：取消 + 面包屑（存入目录，点击换）—— 不用系统 toolbar
 /// 编辑区：标题默认今天日期（可改），右上角收起键盘；正文撑满余下空间
@@ -18,6 +57,9 @@ struct ComposeView: View {
     // 默认目标：收件箱（ensureInbox 解析），选定后记 (id, name)
     @State private var targetId: String? = nil
     @State private var targetName = "收件箱"
+    /// 草稿恢复提示（灰字，别用红色错误样式）
+    @State private var draftHint = ""
+    @State private var draftSaveWork: DispatchWorkItem?
     @FocusState private var titleFocused: Bool
     @FocusState private var inputFocused: Bool
     var onSaved: () async -> Void
@@ -32,11 +74,17 @@ struct ComposeView: View {
     private let accent = Theme.accent
 
     /// 「2026年10月20日」格式的今天日期
-    static func defaultDateTitle() -> String {
+    /// ⚠️ DateFormatter 创建很贵（~1ms），而 hasContent 会在每次 body 重算时调它
+    ///    （比如 .interactiveDismissDisabled(hasContent)），必须复用同一个实例
+    private static let dateTitleFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
         f.dateFormat = "yyyy年M月d日"
-        return f.string(from: Date())
+        return f
+    }()
+
+    static func defaultDateTitle() -> String {
+        dateTitleFormatter.string(from: Date())
     }
 
     var body: some View {
@@ -104,6 +152,15 @@ struct ComposeView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
+            if !draftHint.isEmpty {
+                Text(draftHint)
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 6)
+            }
+
             if !errorMsg.isEmpty {
                 Text(errorMsg)
                     .font(.footnote).foregroundColor(.red)
@@ -117,20 +174,56 @@ struct ComposeView: View {
         }
         .background(Color(UIColor.systemBackground))
         .onAppear {
+            restoreDraftIfNeeded()
             // 光标直接落正文（截图如此）；标题已是日期，不需要先改标题
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { inputFocused = true }
         }
+        // 打字即存草稿（0.6s 防抖）：崩溃 / 被系统杀掉 / 切走太久，回来能捡回来
+        .onChange(of: text) { _ in scheduleDraftSave() }
+        .onChange(of: title) { _ in scheduleDraftSave() }
+        // 有内容时禁掉下滑关闭（那条路径绕过「丢弃确认」，能直接丢稿）
+        .interactiveDismissDisabled(hasContent)
         .sheet(isPresented: $showPicker) {
             MoveTargetPicker(noteTitle: "新笔记") { id, name in
                 targetId = id
                 targetName = name
+                scheduleDraftSave()
             }
             .navigationViewStyle(.stack)
         }
         .confirmationDialog("丢弃这篇笔记？", isPresented: $showDiscardConfirm, titleVisibility: .visible) {
-            Button("丢弃", role: .destructive) { dismiss() }
+            Button("丢弃", role: .destructive) {
+                ComposeDraftStore.clear()
+                dismiss()
+            }
             Button("继续编辑", role: .cancel) {}
         }
+    }
+
+    /// 恢复上次未保存的草稿（只在当前还是空白时，避免覆盖刚敲的内容）
+    private func restoreDraftIfNeeded() {
+        guard text.isEmpty, !hasContent, let d = ComposeDraftStore.load() else { return }
+        title = d.title
+        text = d.text
+        noteType = d.noteType
+        targetId = d.targetId
+        targetName = d.targetName
+        draftHint = "已恢复上次未保存的草稿"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { draftHint = "" }
+    }
+
+    private func scheduleDraftSave() {
+        draftSaveWork?.cancel()
+        guard hasContent else {
+            ComposeDraftStore.clear()
+            return
+        }
+        let t = title, b = text, ty = noteType, tid = targetId, tn = targetName
+        let work = DispatchWorkItem {
+            ComposeDraftStore.save(title: t, text: b, noteType: ty, targetId: tid, targetName: tn)
+        }
+        draftSaveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
     }
 
     // MARK: - 头部：取消 + 面包屑（存入目录）
@@ -273,6 +366,7 @@ struct ComposeView: View {
                 AppLogger.shared.log("新建已入离线队列: \(t)")
             }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
+            ComposeDraftStore.clear()   // 已落库（或已入离线队列），草稿使命结束
             await onSaved()
             if !NoteCache.shared.pendingOps.isEmpty {
                 await NoteCache.shared.flushPendingOps()
