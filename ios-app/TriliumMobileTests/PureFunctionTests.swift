@@ -96,4 +96,15 @@ final class PureFunctionTests: XCTestCase {
         let closes = html.components(separatedBy: "</script>").count - 1
         XCTAssertEqual(opens, closes, "增强脚本里 <script> 与 </script> 必须成对，否则整段不执行")
     }
+
+    // MARK: - 富文本编辑：整篇 HTML → 可编辑片段
+
+    func testEditableBodyStripsFullDocument() {
+        let html = "<!DOCTYPE html><html><head><title>x</title></head><body><p>hi</p></body></html>"
+        XCTAssertEqual(RichTextEditorView.editableBody(from: html), "<p>hi</p>")
+    }
+
+    func testEditableBodyKeepsFragment() {
+        XCTAssertEqual(RichTextEditorView.editableBody(from: "<p>a</p>"), "<p>a</p>")
+    }
 }

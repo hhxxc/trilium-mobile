@@ -18,9 +18,14 @@ struct NoteDetailView: View {
     @State private var imageData: Data?
     @State private var loading = true
     @State private var hasLoadedOnce = false
+    /// 正文真的拿到了（缓存或网络）。编辑入口据此放行 ——
+    /// 否则加载中途点「编辑」会拿到空正文，一保存就把服务端内容清空。
+    @State private var contentLoaded = false
     @State private var errorMsg = ""
     @State private var showEditor = false
     @State private var showWebEditor = false
+    /// 富文本编辑（text 笔记）：原生容器 + contenteditable，不再被迫跳网页编辑器
+    @State private var showRichEditor = false
     @State private var showEditChoice = false
     @State private var shareURL: URL?
     /// 笔记内链接点击后打开的目标笔记（sheet(item:)）
@@ -156,8 +161,14 @@ struct NoteDetailView: View {
                     }
                     .accessibilityLabel("分享笔记")
                 }
-                if note.type == "text" || note.type == "code" {
+                if note.type == "code" {
+                    // code 用原生 TextEditor（等宽、够用）
+                    Button("编辑") { showEditor = true }
+                        .disabled(!contentLoaded)
+                } else if note.type == "text" {
+                    // text 走富文本编辑器（可选网页编辑器处理表格/公式等重格式）
                     Button("编辑") { showEditChoice = true }
+                        .disabled(!contentLoaded)
                 }
             }
         }
@@ -176,9 +187,13 @@ struct NoteDetailView: View {
             WebEditorView(note: note)
         }
         .confirmationDialog("选择编辑方式", isPresented: $showEditChoice, titleVisibility: .visible) {
-            Button("原生编辑（简洁快速）") { showEditor = true }
+            Button("富文本编辑（推荐）") { showRichEditor = true }
             Button("网页编辑（完整格式：表格/公式/图片）") { showWebEditor = true }
             Button("取消", role: .cancel) {}
+        }
+        // 富文本编辑：返回后强制刷新（标题/正文都可能变）
+        .sheet(isPresented: $showRichEditor, onDismiss: { Task { await load(force: true) } }) {
+            RichTextEditorView(note: note, initialContent: textContent, initialTitle: displayTitle)
         }
         // 笔记内链接：App 内新开一层阅读页（点返回关闭）
         .sheet(item: $linkedNote) { linked in
@@ -580,6 +595,7 @@ struct NoteDetailView: View {
             }
             if servedFromCache {
                 hasLoadedOnce = true
+                contentLoaded = true
                 loading = false
                 rebuildRenderedHTML()   // 缓存正文先渲染出来
                 // 60s 内刚和服务端对过：直接用缓存，别再拉一遍
@@ -614,6 +630,7 @@ struct NoteDetailView: View {
                     NoteCache.shared.saveContent(note.noteId, text: raw)
                     rebuildRenderedHTML()
                 }
+                contentLoaded = true
             default:
                 break
             }
