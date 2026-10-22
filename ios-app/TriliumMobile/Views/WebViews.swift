@@ -174,6 +174,9 @@ struct ContentWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let cfg = WKWebViewConfiguration()
+        // 共享进程池：正文/编辑器/服务端页复用同一个 WebContent 进程，
+        // 新建 WKWebView 的启动开销和内存都明显更低（以前每篇笔记都单开进程）
+        cfg.processPool = FullWebView.sharedProcessPool
         let ucc = cfg.userContentController
         ucc.add(context.coordinator, name: "imgsave")
         ucc.add(context.coordinator, name: "outline")

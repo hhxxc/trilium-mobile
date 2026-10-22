@@ -79,7 +79,10 @@ final class AppSettings: ObservableObject {
     }
 
     @Published var server: String {
-        didSet { UserDefaults.standard.set(server, forKey: Keys.server) }
+        didSet {
+            UserDefaults.standard.set(server, forKey: Keys.server)
+            cachedServerURL = nil   // 地址变了，缓存的 URL 作废
+        }
     }
     /// 备用服务器地址：当前地址连不上（证书过期 / 出门回家换网）时自动互换
     @Published var serverBackup: String {
@@ -108,10 +111,18 @@ final class AppSettings: ObservableObject {
     @Published var isLoggedIn: Bool
 
     /// 规范化后的服务器基地址（去尾部斜杠）
+    ///
+    /// 缓存结果：每个 API 请求都会读它，而清洗地址要逐字符过白名单 + 解析 URL。
+    /// 地址只在设置页/自动切换时变，变时清缓存（见 server didSet）。
+    private var cachedServerURL: URL?
+
     var serverURL: URL {
+        if let c = cachedServerURL { return c }
         // 清洗是最后防线：就算存量数据里混了脏字符，请求层拿到的永远是干净的
         let s = Self.sanitizeServerAddress(server)
-        return URL(string: s) ?? URL(string: AppConfig.defaultServer)!
+        let u = URL(string: s) ?? URL(string: AppConfig.defaultServer)!
+        cachedServerURL = u
+        return u
     }
 
     // MARK: - 地址清洗（防粘贴脏字符）

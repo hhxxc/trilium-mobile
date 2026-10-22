@@ -12,6 +12,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         UpdateCenter.shared.backgroundCompletionHandler = completionHandler
         AppLogger.shared.log("后台下载会话被唤醒: \(identifier)")
     }
+
+    /// 内存警告：先丢内存里的附件/摘要副本（磁盘缓存不动）。
+    /// 大图笔记的原图位图是 OOM 头号来源，清掉后下次读盘/降采样重来即可。
+    func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
+        NoteCache.shared.trimMemory()
+    }
 }
 
 /// 崩溃面包屑：只是为了让「闪退」在诊断日志里留下痕迹。

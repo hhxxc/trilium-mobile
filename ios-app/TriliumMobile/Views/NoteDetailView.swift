@@ -1,6 +1,7 @@
 import SwiftUI
 import WebKit
 import Photos
+import ImageIO
 
 /// 笔记详情（原生阅读页）：ETAPI 拿内容，按类型原生渲染。
 /// text → 富文本 HTML；code → 代码；image → 图片；file → 附件；其他 → 降级提示。
@@ -32,6 +33,11 @@ struct NoteDetailView: View {
     /// 编辑改标题后的最新标题（note 是 let，PATCH 后靠这里刷新显示）
     @State private var freshTitle: String = ""
     @State private var freshType: String = ""
+    /// 缓存的阅读页 HTML：正文/标题/字号变化时才重拼。
+    /// ⚠️ 以前直接在 body 里调 NoteHTML.wrap(...)，每次状态变化（大纲上报、上下篇加载、
+    ///    字号切换）都重新生成整篇 HTML；mermaid 笔记还要把 2.6MB 的 mermaid.min.js
+    ///    重新内联一遍，主线程直接卡一下。
+    @State private var renderedHTML: String = ""
     // 同层兄弟导航（底部条：上一篇/下一篇 + 父路径）
     @State private var siblings: [Note] = []
     @State private var parentTitle: String = ""
@@ -220,6 +226,10 @@ struct NoteDetailView: View {
         .onAppear {
             NotificationCenter.default.post(name: .noteDetailAppeared, object: nil)
         }
+        // 字号切换：重拼 HTML（renderedHTML 里带着 fontScale，不重拼就不生效）
+        .onChange(of: settings.readerFontScale) { _ in
+            rebuildRenderedHTML()
+        }
     }
 
     private func openLinkedNote(_ noteId: String) {
@@ -256,24 +266,53 @@ struct NoteDetailView: View {
     private var content: some View {
         switch note.type {
         case "image":
-            if let data = imageData, let img = UIImage(data: data) {
+            if let data = imageData, let img = Self.downsampledImage(data) {
                 ZoomableImageView(image: img)
             } else {
                 fallback(typeName: "图片", icon: "photo")
             }
         case "file":
             fileView
-        case "code":
-            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "code", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote, onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump)
-        case "mermaid":
-            ContentWebView(html: NoteHTML.wrapMermaid(title: displayTitle, code: textContent), noteId: note.noteId, onOpenNote: openLinkedNote, onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump)
-        case "render":
-            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "render", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote, onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump)
-        case "text":
-            ContentWebView(html: NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "text", fontScale: settings.readerFontScale), noteId: note.noteId, onOpenNote: openLinkedNote, onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump)
+        case "code", "mermaid", "render", "text":
+            ContentWebView(html: renderedHTML, noteId: note.noteId, onOpenNote: openLinkedNote, onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump)
         default:
             fallback(typeName: note.type, icon: "doc.text")
         }
+    }
+
+    /// 重拼阅读页 HTML（正文 / 标题 / 字号变化时调用）
+    private func rebuildRenderedHTML() {
+        switch note.type {
+        case "code":
+            renderedHTML = NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "code", fontScale: settings.readerFontScale)
+        case "mermaid":
+            renderedHTML = NoteHTML.wrapMermaid(title: displayTitle, code: textContent)
+        case "render":
+            renderedHTML = NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "render", fontScale: settings.readerFontScale)
+        case "text":
+            renderedHTML = NoteHTML.wrap(title: displayTitle, raw: textContent, noteType: "text", fontScale: settings.readerFontScale)
+        default:
+            break
+        }
+    }
+
+    /// 大图降采样：直接 UIImage(data:) 会把整张原图解码成位图（6000×4000 ≈ 96MB），
+    /// 老机型上打开一张原图就可能被系统杀掉。用 ImageIO 按 3072px 上限解码，
+    /// 屏幕显示与 6x 放大都够用，内存降到 1/4 左右。
+    static func downsampledImage(_ data: Data, maxPixel: CGFloat = 3072) -> UIImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return UIImage(data: data)
+        }
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+        ]
+        if let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) {
+            return UIImage(cgImage: cg)
+        }
+        return UIImage(data: data)
     }
 
     private var fileView: some View {
@@ -508,7 +547,7 @@ struct NoteDetailView: View {
                     imageData = cached
                     servedFromCache = true
                 }
-            case "text", "code", "render":
+            case "text", "code", "render", "mermaid":
                 if let cached = NoteCache.shared.loadContent(note.noteId) {
                     textContent = cached
                     servedFromCache = true
@@ -519,6 +558,7 @@ struct NoteDetailView: View {
             if servedFromCache {
                 hasLoadedOnce = true
                 loading = false
+                rebuildRenderedHTML()   // 缓存正文先渲染出来
             }
         }
 
@@ -529,6 +569,8 @@ struct NoteDetailView: View {
                 let fresh = try await ETAPIClient.shared.getNote(note.noteId)
                 freshTitle = fresh.title
                 freshType = fresh.type
+                // 标题变了要重拼（HTML 的 <h1> 用的就是 displayTitle）
+                rebuildRenderedHTML()
             }
             switch note.type {
             case "image":
@@ -536,12 +578,13 @@ struct NoteDetailView: View {
                 let data = try await ETAPIClient.shared.getContentData(note.noteId)
                 imageData = data
                 NoteCache.shared.saveBlob(note.noteId, data: data)
-            case "text", "code", "render":
+            case "text", "code", "render", "mermaid":
                 let raw = try await ETAPIClient.shared.getContent(note.noteId)
                 // 内容没变就不改 state（避免无意义的 body 重算 + WebView 重新比对）
-                if textContent != raw {
+                if textContent != raw || renderedHTML.isEmpty {
                     textContent = raw
                     NoteCache.shared.saveContent(note.noteId, text: raw)
+                    rebuildRenderedHTML()
                 }
             default:
                 break

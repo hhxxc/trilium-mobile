@@ -74,9 +74,25 @@ struct Note: Codable, Identifiable, Equatable {
     }()
 
     /// dateModified 解析成本地 Date（分组/相对时间共用；解析失败返回 nil）
+    ///
+    /// ⚠️ 性能（2026-10-22 深度优化）：ISO8601DateFormatter 解析很贵，
+    ///    而列表每行每次 body 重算都会调它（滚动一屏几十次）。
+    ///    按原始字符串缓存解析结果（笔记不可变，字符串相同 = 时间相同）。
+    private static let parsedDateCache: NSCache<NSString, NSDate> = {
+        let c = NSCache<NSString, NSDate>()
+        c.countLimit = 800
+        return c
+    }()
+
     var modifiedDate: Date? {
         guard let raw = dateModified, !raw.isEmpty else { return nil }
-        return Self.isoParser.date(from: raw) ?? Self.isoParserNoFrac.date(from: raw)
+        let key = raw as NSString
+        if let hit = Self.parsedDateCache.object(forKey: key) { return hit as Date }
+        guard let d = Self.isoParser.date(from: raw) ?? Self.isoParserNoFrac.date(from: raw) else {
+            return nil
+        }
+        Self.parsedDateCache.setObject(d as NSDate, forKey: key)
+        return d
     }
 
     /// 列表展示的友好时间：今天 HH:mm，昨天「昨天」，更早日期（本地时区，修正 UTC+8 差 8 小时）

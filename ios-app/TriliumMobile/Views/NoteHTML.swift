@@ -92,6 +92,7 @@ enum NoteHTML {
         navigator.clipboard.writeText(text).then(done).catch(fallback);
       } else { fallback(); }
     });
+    </script>
     <script>
     // 回到顶部按钮：纯前端，不经过原生桥；页面没有滚动时自动隐藏
     (function() {
@@ -174,7 +175,9 @@ enum NoteHTML {
 
     /// 给任意 HTML 注入代码块增强（有 </head> 插头部，否则放开头）
     private static func injectEnhance(_ html: String) -> String {
-        if html.lowercased().contains("</head>") {
+        // ⚠️ 别用 html.lowercased().contains(...)：正文动辄几百 KB～几 MB，
+        //    为了找个标签把整篇小写复制一遍，纯浪费内存和 CPU。
+        if html.range(of: "</head>", options: .caseInsensitive) != nil {
             return html.replacingOccurrences(of: "</head>", with: codeEnhance + "</head>", options: .caseInsensitive)
         }
         return codeEnhance + html
@@ -199,8 +202,10 @@ enum NoteHTML {
             bodyContent = raw
         }
 
-    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if noteType != "code" && (trimmed.hasPrefix("<!doctype") || trimmed.hasPrefix("<html")) {
+        // 只取开头几十个字符判类型：以前对整篇 raw 做 lowercased()，
+        // 一篇 1MB 的笔记就要白复制 1MB 字符串
+        let head = raw.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24).lowercased()
+        if noteType != "code" && (head.hasPrefix("<!doctype") || head.hasPrefix("<html")) {
             let mobileCSS = """
             <style>
               body { font-family: -apple-system, "PingFang SC", sans-serif;
@@ -237,7 +242,7 @@ enum NoteHTML {
               hr { border: none; border-top: 1px solid rgba(120,120,128,0.3); margin: 20px 0; }
             </style>
             """
-            if raw.lowercased().contains("</head>") {
+            if raw.range(of: "</head>", options: .caseInsensitive) != nil {
                 return injectEnhance(raw.replacingOccurrences(of: "</head>", with: mobileCSS + "</head>", options: .caseInsensitive))
             }
             return injectEnhance(raw)

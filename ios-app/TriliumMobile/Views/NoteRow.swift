@@ -127,14 +127,31 @@ struct NoteRow: View {
 
     /// HTML → 纯文本（去标签、解常见实体、压空白）
     /// nonisolated：这个方法要在后台线程（Task.detached）里跑，不能挂 MainActor
+    ///
+    /// ⚠️ 性能（2026-10-22 深度优化）：`replacingOccurrences(options: .regularExpression)`
+    ///    每次调用都会重新编译正则；滚动一屏要跑几十次。改成预编译 NSRegularExpression。
+    private static let tagRegex = try? NSRegularExpression(pattern: "<[^>]+>")
+    private static let spaceRegex = try? NSRegularExpression(pattern: "\\s+")
+
     nonisolated static func plainText(from html: String) -> String {
-        var s = html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        let full = NSRange(html.startIndex..<html.endIndex, in: html)
+        var s: String
+        if let re = tagRegex {
+            s = re.stringByReplacingMatches(in: html, range: full, withTemplate: " ")
+        } else {
+            s = html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        }
         let entities: [(String, String)] = [
             ("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
             ("&quot;", "\""), ("&#39;", "'"), ("&ldquo;", "「"), ("&rdquo;", "」")
         ]
         for (k, v) in entities { s = s.replacingOccurrences(of: k, with: v) }
-        s = s.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        if let re = spaceRegex {
+            let r = NSRange(s.startIndex..<s.endIndex, in: s)
+            s = re.stringByReplacingMatches(in: s, range: r, withTemplate: " ")
+        } else {
+            s = s.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        }
         return s.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

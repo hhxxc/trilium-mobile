@@ -42,6 +42,15 @@ final class NoteCache {
         return c
     }()
 
+    // MARK: - 离线队列状态（并发安全）
+
+    /// 保护 pendingCache + UserDefaults 的读改写。
+    /// ⚠️ 以前 `pendingOps` 是无锁的「解码-追加-编码」：前台补交（flush）与编辑器
+    ///    enqueue 撞在一起时，后写的会覆盖先写的 → 用户离线改的内容直接丢。
+    ///    现在所有变更都走 mutatePendingOps，按 op.id 增删，不再整表覆盖。
+    let pendingLock = NSLock()
+    var pendingCache: [PendingOp]?
+
     // MARK: - 元数据
 
     private var metaURL: URL { root.appendingPathComponent("notes.json") }
@@ -87,6 +96,14 @@ final class NoteCache {
 
     func storeSummary(_ noteId: String, _ text: String) {
         summaryCache.setObject(text as NSString, forKey: noteId as NSString)
+    }
+
+    /// 收到内存警告时调用：丢掉纯内存缓存（磁盘缓存保留，重新读一下就有）。
+    /// 大图/大附件的内存副本最占地方，先清它。
+    func trimMemory() {
+        blobCache.removeAllObjects()
+        summaryCache.removeAllObjects()
+        AppLogger.shared.log("内存警告：已清空内存缓存（磁盘缓存保留）")
     }
 
     // MARK: - 二进制（图片/附件）
@@ -222,6 +239,9 @@ struct PendingOp: Codable, Identifiable {
     let noteId: String
     var title: String?
     var content: String?
+    /// 新建时的笔记类型（text/code）：离线速记的正文和类型必须一起入队，
+    /// 否则断网时记的内容只剩一个标题，正文直接丢（2026-10-22 修）
+    var noteType: String?
     var parentNoteId: String?
     let createdAt: Date
     /// 入队时本地已知的服务端版本戳（utcDateModified）——补交前拿它比对，
@@ -232,20 +252,21 @@ struct PendingOp: Codable, Identifiable {
 
     /// ⚠️ 显式 init（带默认值）：新增字段时旧调用点不用逐个改
     init(kind: String, id: String, noteId: String, title: String? = nil,
-         content: String? = nil, parentNoteId: String? = nil, createdAt: Date = Date(),
-         baseStamp: String? = nil, conflicted: Bool = false) {
+         content: String? = nil, noteType: String? = nil, parentNoteId: String? = nil,
+         createdAt: Date = Date(), baseStamp: String? = nil, conflicted: Bool = false) {
         self.kind = kind
         self.id = id
         self.noteId = noteId
         self.title = title
         self.content = content
+        self.noteType = noteType
         self.parentNoteId = parentNoteId
         self.createdAt = createdAt
         self.baseStamp = baseStamp
         self.conflicted = conflicted
     }
 
-    /// ⚠️ 老版本持久化的队列里没有 baseStamp/conflicted —— 解码必须容错。
+    /// ⚠️ 老版本持久化的队列里没有 baseStamp/conflicted/noteType —— 解码必须容错。
     ///    合成版 init(from:) 对非 Optional 字段用 decode（缺键直接抛），
     ///    一旦抛错，pendingOps 会 `?? []` 静默清空 → 用户离线改的内容整队丢失。
     init(from decoder: Decoder) throws {
@@ -255,6 +276,7 @@ struct PendingOp: Codable, Identifiable {
         noteId = try c.decode(String.self, forKey: .noteId)
         title = try c.decodeIfPresent(String.self, forKey: .title)
         content = try c.decodeIfPresent(String.self, forKey: .content)
+        noteType = try c.decodeIfPresent(String.self, forKey: .noteType)
         parentNoteId = try c.decodeIfPresent(String.self, forKey: .parentNoteId)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         baseStamp = try c.decodeIfPresent(String.self, forKey: .baseStamp)
@@ -272,20 +294,40 @@ extension NoteCache {
 
     var pendingOps: [PendingOp] {
         get {
-            guard let data = UserDefaults.standard.data(forKey: Self.pendingKey) else { return [] }
-            return (try? JSONDecoder().decode([PendingOp].self, from: data)) ?? []
+            pendingLock.lock(); defer { pendingLock.unlock() }
+            if let c = pendingCache { return c }
+            let list = Self.loadPendingFromDisk()
+            pendingCache = list
+            return list
         }
         set {
+            pendingLock.lock()
+            pendingCache = newValue
             UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: Self.pendingKey)
+            pendingLock.unlock()
             NotificationCenter.default.post(name: Self.pendingOpsChanged, object: nil)
         }
     }
 
+    private static func loadPendingFromDisk() -> [PendingOp] {
+        guard let data = UserDefaults.standard.data(forKey: pendingKey) else { return [] }
+        return (try? JSONDecoder().decode([PendingOp].self, from: data)) ?? []
+    }
+
+    /// 原子改队列：读-改-写一把锁完成，不会覆盖同时发生的 enqueue。
+    func mutatePendingOps(_ body: (inout [PendingOp]) -> Void) {
+        pendingLock.lock()
+        var list = pendingCache ?? Self.loadPendingFromDisk()
+        body(&list)
+        pendingCache = list
+        UserDefaults.standard.set(try? JSONEncoder().encode(list), forKey: Self.pendingKey)
+        pendingLock.unlock()
+        NotificationCenter.default.post(name: Self.pendingOpsChanged, object: nil)
+    }
+
     func enqueue(_ op: PendingOp) {
-        var list = pendingOps
-        list.append(op)
-        pendingOps = list
-        AppLogger.shared.log("离线入队: \(op.kind) \(op.noteId)（共 \(list.count) 条待同步）")
+        mutatePendingOps { $0.append(op) }
+        AppLogger.shared.log("离线入队: \(op.kind) \(op.noteId)（共 \(pendingOps.count) 条待同步）")
     }
 
     /// 按序补交队列：成功一项删一项；某项失败即停（后面的依赖前面的顺序，不能跳）。
@@ -313,7 +355,10 @@ extension NoteCache {
                 let fresh: Note? = try? await ETAPIClient.shared.getNote(op.noteId)
                 if let cur = fresh?.versionStamp, !cur.isEmpty, cur != base {
                     list[idx].conflicted = true
-                    pendingOps = list
+                    // 按 id 打标记（不能用整表覆盖：期间可能新增了别的待同步项）
+                    mutatePendingOps { arr in
+                        if let i = arr.firstIndex(where: { $0.id == op.id }) { arr[i].conflicted = true }
+                    }
                     AppLogger.shared.log("补交发现冲突[\(op.kind)] \(op.noteId)：服务端 \(cur) ≠ 我的基准 \(base)，等待裁决")
                     NotificationCenter.default.post(name: Self.conflictDetected, object: nil)
                     allSettled = false
@@ -336,16 +381,19 @@ extension NoteCache {
                     } else {
                         parent = try await ETAPIClient.shared.ensureInbox()
                     }
+                    // 正文/类型一起补交：离线速记的内容不能只剩标题
                     _ = try await ETAPIClient.shared.createNote(
                         parentNoteId: parent,
-                        title: op.title ?? "")
+                        title: op.title ?? "",
+                        content: op.content ?? "",
+                        type: op.noteType ?? "text")
                 case "delete":
                     try await ETAPIClient.shared.deleteNote(op.noteId)
                 default:
                     break  // 未知类型（旧版本残留）：丢弃
                 }
                 list.remove(at: idx)
-                pendingOps = list
+                mutatePendingOps { $0.removeAll { $0.id == op.id } }
                 AppLogger.shared.log("离线补交成功: \(op.kind) \(op.noteId)，剩 \(list.count) 条")
             } catch {
                 AppLogger.shared.log("离线补交失败（保留队列，下次重试）: \(error.localizedDescription)")
@@ -362,20 +410,19 @@ extension NoteCache {
 
     /// 保留我的：清掉冲突标记 + 作废基准（下次补交直接覆盖提交）
     func resolveKeepMine(_ opId: String) {
-        var list = pendingOps
-        guard let i = list.firstIndex(where: { $0.id == opId }) else { return }
-        list[i].conflicted = false
-        list[i].baseStamp = nil      // 已裁决，不再比对
-        pendingOps = list
-        AppLogger.shared.log("冲突裁决[保留我的]：\(list[i].kind) \(list[i].noteId)")
+        let op = pendingOps.first { $0.id == opId }
+        mutatePendingOps { list in
+            guard let i = list.firstIndex(where: { $0.id == opId }) else { return }
+            list[i].conflicted = false
+            list[i].baseStamp = nil      // 已裁决，不再比对
+        }
+        AppLogger.shared.log("冲突裁决[保留我的]：\(op?.kind ?? "?") \(op?.noteId ?? opId)")
     }
 
     /// 丢弃我的：整条从队列移除（服务端版本为准）
     func resolveDropMine(_ opId: String) {
-        var list = pendingOps
-        guard let i = list.firstIndex(where: { $0.id == opId }) else { return }
-        let op = list.remove(at: i)
-        pendingOps = list
-        AppLogger.shared.log("冲突裁决[丢弃我的]：\(op.kind) \(op.noteId)")
+        let op = pendingOps.first { $0.id == opId }
+        mutatePendingOps { $0.removeAll { $0.id == opId } }
+        AppLogger.shared.log("冲突裁决[丢弃我的]：\(op?.kind ?? "?") \(op?.noteId ?? opId)")
     }
 }

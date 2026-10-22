@@ -838,9 +838,11 @@ struct NoteListView: View {
         guard !revalidating.contains(key) else { return }
         revalidating.insert(key)
         defer { revalidating.remove(key) }
+        let gen = loadGeneration
         do {
             let result = try await fetchList(key: key, query: q, force: true)
-            // 用户已经切到别的 tab / 改了搜索词 → 结果作废（但缓存本身仍有用）
+            // 期间用户下拉刷新 / 切了模式（代数变了）→ 这次结果作废，别把新数据盖回旧的
+            guard gen == loadGeneration else { return }
             listCache[key] = result
             listCacheTime[key] = Date()
             guard loadKey == key else { return }

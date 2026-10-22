@@ -182,7 +182,10 @@ struct SettingsView: View {
                 if let info = try? await ETAPIClient.shared.appInfo() {
                     serverVersion = info.appVersion ?? ""
                 }
-                cacheSize = NoteCache.shared.totalSize()
+                // 目录枚举（几百个缓存文件）放后台：以前在主线程跑，进设置页会卡一下
+                cacheSize = await Task.detached(priority: .utility) {
+                    NoteCache.shared.totalSize()
+                }.value
             }
         }
         .navigationViewStyle(.stack)

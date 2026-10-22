@@ -265,10 +265,11 @@ struct ComposeView: View {
                     parentNoteId: parentId, title: t, content: content, type: noteType)
                 errorMsg = ""
             } catch {
-                // 断网/失败：入离线队列（队列模型只带标题，正文不入队）
+                // 断网/失败：入离线队列（**正文和类型一起入队**，回来补交时建的是完整笔记，
+                // 以前只带标题，离线速记的内容会整段丢失）
                 NoteCache.shared.enqueue(PendingOp(kind: "create", id: UUID().uuidString,
-                    noteId: "", title: t, content: nil, parentNoteId: nil,
-                    createdAt: Date()))
+                    noteId: "", title: t, content: content, noteType: noteType,
+                    parentNoteId: targetId, createdAt: Date()))
                 AppLogger.shared.log("新建已入离线队列: \(t)")
             }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
