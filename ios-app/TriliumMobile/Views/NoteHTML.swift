@@ -115,6 +115,19 @@ enum NoteHTML {
       } else { makeBtn(); }
     })();
     </script>
+    <script>
+    // 图片加载失败（离线 / 服务端暂时不通）：给个浅色占位块，
+    // 别让正文里满屏「破图」图标 —— 离线阅读时这几乎是必然现象。
+    window.addEventListener('error', function (e) {
+      var img = e.target;
+      if (!img || img.tagName !== 'IMG' || img.getAttribute('data-failed')) return;
+      img.setAttribute('data-failed', '1');
+      img.style.minHeight = '28px';
+      img.style.background = 'rgba(120,120,128,0.12)';
+      img.style.borderRadius = '6px';
+      if (!img.alt) img.alt = '图片未加载（离线？）';
+    }, true);
+    </script>
     """
 
     /// mermaid.min.js 全文（Bundle 内联，~2.6MB；只加载一次）

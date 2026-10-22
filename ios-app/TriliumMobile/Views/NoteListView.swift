@@ -107,6 +107,15 @@ struct NoteListView: View {
     /// 用户看到的永远是「秒开 + 自己更新」，不用下拉刷新也能拿到最新列表。
     private static let cacheTTL: TimeInterval = 30
 
+    /// 分页深度：最近列表默认 30 条，可逐页加；搜索默认 100 条。
+    /// 放在 loadKey 里 —— 改深度就等于换缓存键，.task 会自动重取，不用手动 reload。
+    @State private var recentLimit = 30
+    @State private var searchLimit = 100
+    private static let recentLimitStep = 30
+    private static let recentLimitMax = 120
+    private static let searchLimitStep = 100
+    private static let searchLimitMax = 300
+
     /// 底部工具条实际占高（胶囊/＋按钮 44 + 上 8 + 下 4）+ 一点余量。
     /// 用于列表末尾留白：iOS 15 的 safeAreaInset 不 inset List，只能自己补。
     private static let bottomBarClearance: CGFloat = 64
@@ -119,7 +128,7 @@ struct NoteListView: View {
     /// ⚠️ 范围与排序必须进 key：以前 key 只有「模式|关键词」，改排序后 key 不变，
     ///    命中缓存就会**一直显示上一次的排序结果**（2026-10-20 加缓存时一并修）。
     private var loadKey: String {
-        "\(browseMode.rawValue)|\(searchQuery)|\(searchTitleOnly ? 1 : 0)|\(searchByModified ? 1 : 0)"
+        "\(browseMode.rawValue)|\(searchQuery)|\(searchTitleOnly ? 1 : 0)|\(searchByModified ? 1 : 0)|\(recentLimit)|\(searchLimit)"
     }
 
     var body: some View {
@@ -212,6 +221,8 @@ struct NoteListView: View {
         // 搜索框在导航栏里（层级高于遮罩，压不住）：抽屉开着时一旦开始输入就顺手收回，
         // 否则会出现「抽屉还开着、导航栏已切成搜索态」的错位画面
         .onChange(of: searchQuery) { q in
+            // 换关键词回到最小深度（上次「加载更多」的 300 条不该带到新搜索里）
+            searchLimit = Self.searchLimitStep
             if drawerOpen && !q.isEmpty {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { drawerOpen = false }
             }
@@ -353,8 +364,21 @@ struct NoteListView: View {
                     .listRowSeparator(.hidden)
                 }
                 if !errorMsg.isEmpty {
-                    Text(errorMsg).font(.footnote).foregroundColor(.secondary)
-                        .listRowSeparator(.hidden)
+                    // 有缓存时失败只显示一行灰字，用户没地方点 → 给个明确的重试
+                    Button {
+                        Task { await reload() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                            Text(errorMsg)
+                            Spacer()
+                        }
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .listRowSeparator(.hidden)
                 }
                 if isSearching || browseMode == .favorites {
                     // 搜索结果 / 收藏：平铺（分组反而碍事）
@@ -396,6 +420,27 @@ struct NoteListView: View {
                                 .textCase(nil)
                         }
                     }
+                }
+                // 加载更多：最近列表默认只取 30 条，翻到底可以往后要；
+                // 搜索结果默认 100 条（服务端 limit），同样按需加深，不做无限滚动。
+                if canLoadMore {
+                    Button {
+                        loadMore()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.down.circle")
+                            Text(isSearching
+                                 ? "加载更多（已显示 \(notes.count) 条）"
+                                 : "加载更早的笔记（已显示 \(notes.count) 条）")
+                        }
+                        .font(.footnote)
+                        .foregroundColor(Theme.accent)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .listRowSeparator(.hidden)
                 }
                 // ⚠️ 末尾留白（用户反馈「滑到最下面最后一条被挡住」）：
                 //   iOS 15 的 safeAreaInset 对 **List** 不生效（对 ScrollView 才生效），
@@ -550,6 +595,24 @@ struct NoteListView: View {
     private var pinnedNotes: [Note] {
         guard browseMode == .recent, !isSearching else { return [] }
         return notes.filter { $0.isBookmarked }
+    }
+
+    /// 还能不能继续加深：最近列表 30→120，搜索 100→300
+    private var canLoadMore: Bool {
+        if isSearching {
+            return notes.count >= searchLimit && searchLimit < Self.searchLimitMax
+        }
+        return browseMode == .recent && notes.count >= recentLimit && recentLimit < Self.recentLimitMax
+    }
+
+    /// 加深一页：改 limit 会让 loadKey 变化，.task 自动重取
+    private func loadMore() {
+        UISelectionFeedbackGenerator().selectionChanged()
+        if isSearching {
+            searchLimit = min(searchLimit + Self.searchLimitStep, Self.searchLimitMax)
+        } else {
+            recentLimit = min(recentLimit + Self.recentLimitStep, Self.recentLimitMax)
+        }
     }
 
     /// 实际用于显示的时间分组：置顶模式下把已收藏的剔掉
@@ -798,20 +861,22 @@ struct NoteListView: View {
         let mode = browseMode
         let titleOnly = searchTitleOnly
         let byModified = searchByModified
+        let recentDepth = recentLimit
+        let searchDepth = searchLimit
         let task = Task { () throws -> [Note] in
             if q.isEmpty {
                 switch mode {
                 case .favorites:
                     return try await ETAPIClient.shared.bookmarkedNotes()
                 default:
-                    let r = try await ETAPIClient.shared.recentNotes()
+                    let r = try await ETAPIClient.shared.recentNotes(limit: recentDepth)
                     NoteCache.shared.saveRecentNotes(r) // 缓存，离线可看
                     return r
                 }
             }
             // 拉多一点再做本地筛选：标题过滤 / 按修改时间重排都在客户端完成，
             // 不需要服务端支持额外的搜索语法（也更不容易因为服务端版本差异翻车）
-            var hits = try await ETAPIClient.shared.searchNotes(q, limit: 100)
+            var hits = try await ETAPIClient.shared.searchNotes(q, limit: searchDepth)
             if titleOnly {
                 hits = hits.filter { $0.title.localizedCaseInsensitiveContains(q) }
             }
