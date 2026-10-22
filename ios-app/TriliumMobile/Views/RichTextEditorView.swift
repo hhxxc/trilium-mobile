@@ -289,15 +289,17 @@ struct RichTextEditorView: View {
             HStack {
                 Button("取消") { showLinkInput = false }
                 Spacer()
-                Button("插入") {
+                Button {
                     let url = linkDraft.trimmingCharacters(in: .whitespacesAndNewlines)
                     showLinkInput = false
                     linkDraft = ""
                     guard !url.isEmpty else { return }
                     let escaped = url.replacingOccurrences(of: "'", with: "\\'")
                     controller.js("cmd('createLink', '\(escaped)')")
+                } label: {
+                    // ⚠️ 不能用 .fontWeight(.semibold)：iOS 16+ API，本项目底线 iOS 15
+                    Text("插入").font(.body.weight(.semibold))
                 }
-                .fontWeight(.semibold)
                 .disabled(linkDraft.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
