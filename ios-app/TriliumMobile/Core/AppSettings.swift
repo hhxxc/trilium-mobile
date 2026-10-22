@@ -313,6 +313,13 @@ enum ServerProbe {
         s.serverBackup = primary
         s.server = backup
         AppLogger.shared.log("已切到备用地址 \(backup)（原地址转为备用）")
+        // 通知界面重拉：首屏不再等探测，列表可能已经对着旧地址失败过一次
+        NotificationCenter.default.post(name: .serverSwitched, object: nil)
         return true
     }
+}
+
+extension Notification.Name {
+    /// 主备地址自动互换完成（列表/目录听到后重拉，避免继续显示旧地址的失败结果）
+    static let serverSwitched = Notification.Name("trilium.serverSwitched")
 }

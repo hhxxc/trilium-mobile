@@ -226,6 +226,11 @@ struct NoteListView: View {
         .onReceive(NotificationCenter.default.publisher(for: .noteMetaChanged)) { _ in
             Task { await reload() }
         }
+        // 后台探测把主备地址互换了：首屏可能已对着旧地址失败过，立刻重拉一次
+        .onReceive(NotificationCenter.default.publisher(for: .serverSwitched)) { _ in
+            AppLogger.shared.log("地址已切换，列表自动重拉")
+            Task { await reload() }
+        }
         // 从抽屉树点开笔记：导航已经把阅读页 push 上来了，抽屉必须同步收起
         .onReceive(NotificationCenter.default.publisher(for: .noteDetailAppeared)) { _ in
             if drawerOpen {

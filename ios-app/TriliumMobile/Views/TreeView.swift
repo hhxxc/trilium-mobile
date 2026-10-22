@@ -34,6 +34,11 @@ struct TreeView: View {
         .task {
             if rootChildren.isEmpty { await loadRoot() }
         }
+        // 主备地址互换后目录也重拉（首屏可能已对着旧地址失败过）
+        .onReceive(NotificationCenter.default.publisher(for: .serverSwitched)) { _ in
+            TreeChildCache.clear()
+            Task { await loadRoot() }
+        }
     }
 
     @ViewBuilder
