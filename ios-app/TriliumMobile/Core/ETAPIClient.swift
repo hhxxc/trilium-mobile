@@ -148,7 +148,11 @@ struct ETAPIClient {
             if http.statusCode == 401 && !path.hasSuffix("/auth/login") {
                 // 服务端重启导致 token 失效：广播会话过期，踢回登录
                 AppLogger.shared.log("⚠️ \(method) \(path) → 401（token 失效，广播会话过期）")
-                NotificationCenter.default.post(name: .sessionExpired, object: nil)
+                // ⚠️ 必须回主线程再发：监听方会改 @Published/@State，
+                //    在 URLSession 回调线程上改会触发 SwiftUI 的跨线程发布问题
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: .sessionExpired, object: nil)
+                }
                 throw APIError.http(status: 401)
             }
             guard (200..<300).contains(http.statusCode) else {

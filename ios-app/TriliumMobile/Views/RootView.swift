@@ -39,12 +39,9 @@ struct RootView: View {
             settings.logout()
         }
         .task {
-            // 连接自愈 + token 校验放后台：两者都要打网络，不能挡住首屏
+            // 连接自愈放后台（换网/证书恢复时主备地址自动互换）
             if settings.isLoggedIn {
-                Task { @MainActor in
-                    await ServerProbe.ensureReachable()
-                    await validateToken()
-                }
+                Task { @MainActor in await ServerProbe.ensureReachable() }
             }
             // 冷启动也要上锁：以前只有「切过后台」才锁，重新打开 App 是不验的
             if settings.lockEnabled { authenticate() }
@@ -139,30 +136,11 @@ struct RootView: View {
         }
     }
 
-    /// 启动时用本地 token 实测一次：只有服务端**明确 401** 才清 token 回登录页。
-    /// ⚠️ 网络故障 / TLS 证书过期 / 服务端临时不可用 一律**保留登录态**，
-    ///    先进主界面走本地缓存 —— 否则穿透证书一过期，用户就被无故登出（实测踩过）。
-    private func validateToken() async {
-        guard settings.isLoggedIn else {
-            AppLogger.shared.log("启动校验：无 token，直接进登录页")
-            return
-        }
-        do {
-            // getNote("root") 明确需要鉴权：token 失效返回 401 → 抛错；
-            // 能读到 root 说明 token 真实有效
-            _ = try await ETAPIClient.shared.getNote("root")
-            AppLogger.shared.log("启动校验：token 有效，进主界面")
-        } catch let e as APIError {
-            if case .http(let status) = e, status == 401 {
-                AppLogger.shared.log("启动校验 401：token 已失效，清 token 回登录页")
-                settings.logout()
-            } else {
-                AppLogger.shared.log("启动校验遇服务端异常（\(e.localizedDescription)），保留登录态离线进入")
-            }
-        } catch {
-            AppLogger.shared.log("启动校验遇网络/证书异常（\(error.localizedDescription)），保留登录态离线进入")
-        }
-    }
+    /// ⚠️ 启动不再单独打一次 `getNote("root")` 验 token（2026-10-22 第四轮）：
+    ///    首屏列表/目录/搜索本身就是鉴权请求，token 失效一样会 401 →
+    ///    ETAPIClient 内部广播 `.sessionExpired` → RootView 自动登出。
+    ///    单独校验等于每次冷启动白扔一个往返（慢隧道下 300ms+）。
+    ///    网络/证书错误一律保留登录态（否则穿透证书一过期，用户就被无故登出）。
 }
 
 /// 主界面：单一 NavigationView，列表优先（有道云风格）。

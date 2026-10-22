@@ -8,6 +8,10 @@ import ImageIO
 /// 编辑统一用原生编辑（text/code 用 TextEditor 改标题+正文；复杂类型给「用网页编辑器」兜底）。
 struct NoteDetailView: View {
     let note: Note
+    /// 从哪个目录/父笔记点进来的（目录页/目录树传入）。
+    /// 搜索结果与「最近」列表的响应不带 parentNoteIds，靠这个上下文补出
+    /// 面包屑与「上一篇/下一篇」；不传也能用，内部会补一次元数据。
+    var parentContextId: String? = nil
     @EnvironmentObject private var settings: AppSettings
 
     @State private var textContent: String = ""
@@ -497,7 +501,7 @@ struct NoteDetailView: View {
     private func loadSiblings() async {
         isLoadingSiblings = true
         defer { isLoadingSiblings = false }
-        guard let pid = note.parentNoteIds?.first else { return }
+        guard let pid = await resolveParentId() else { return }
         do {
             let parent = try await ETAPIClient.shared.getNote(pid)
             parentTitle = parent.title
@@ -523,6 +527,29 @@ struct NoteDetailView: View {
     private func fetchSibling(_ ids: [String], _ idx: Int) async -> Note? {
         guard ids.indices.contains(idx) else { return nil }
         return try? await ETAPIClient.shared.getNote(ids[idx])
+    }
+
+    // MARK: - 父笔记解析（导航上下文）
+
+    /// 从「最近/搜索」进来的笔记没有 parentNoteIds（搜索响应不填这个字段）。
+    /// 后台补一次元数据，让面包屑和上一篇/下一篇在这些入口也能用 —— 不挡正文显示。
+    private static var parentIdMemo: [String: String] = [:]
+    private static let parentIdLock = NSLock()
+
+    private func resolveParentId() async -> String? {
+        if let ctx = parentContextId, !ctx.isEmpty { return ctx }
+        if let p = note.parentNoteIds?.first, !p.isEmpty { return p }
+        Self.parentIdLock.lock()
+        let memo = Self.parentIdMemo[note.noteId]
+        Self.parentIdLock.unlock()
+        if let memo = memo { return memo }
+        guard let meta = try? await ETAPIClient.shared.getNote(note.noteId),
+              let p = meta.parentNoteIds?.first, !p.isEmpty else { return nil }
+        Self.parentIdLock.lock()
+        if Self.parentIdMemo.count > 300 { Self.parentIdMemo.removeAll() }
+        Self.parentIdMemo[note.noteId] = p
+        Self.parentIdLock.unlock()
+        return p
     }
 
     /// 加载正文：缓存先上屏（秒开）+ 网络静默刷新（拿到最新就替换）。
@@ -555,6 +582,11 @@ struct NoteDetailView: View {
                 hasLoadedOnce = true
                 loading = false
                 rebuildRenderedHTML()   // 缓存正文先渲染出来
+                // 60s 内刚和服务端对过：直接用缓存，别再拉一遍
+                // （上一篇/下一篇连着翻同一批笔记时，这里省掉大部分请求）
+                if NoteCache.shared.contentIsFresh(note.noteId, within: 60) {
+                    return
+                }
             }
         }
 
@@ -586,6 +618,7 @@ struct NoteDetailView: View {
                 break
             }
             errorMsg = ""
+            NoteCache.shared.markContentFetched(note.noteId)   // 记录新鲜度（60s 内不再重复拉）
         } catch {
             // 屏上已有内容（来自缓存或上次加载）：不打断阅读，只记日志
             let hasContent = !textContent.isEmpty || imageData != nil

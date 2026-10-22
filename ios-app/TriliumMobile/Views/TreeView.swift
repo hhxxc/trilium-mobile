@@ -39,6 +39,11 @@ struct TreeView: View {
             TreeChildCache.clear()
             Task { await loadRoot() }
         }
+        // 离线新建/删除补交成功（别的页面触发）→ 目录结构已经变了
+        .onReceive(NotificationCenter.default.publisher(for: NoteCache.treeStructureChanged)) { _ in
+            TreeChildCache.clear()
+            Task { await loadRoot() }
+        }
     }
 
     @ViewBuilder

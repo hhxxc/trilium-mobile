@@ -103,6 +103,28 @@ final class NoteCache {
         summaryCache.setObject(text as NSString, forKey: noteId as NSString)
     }
 
+    // MARK: - 正文新鲜度（避免反复下载同一篇）
+
+    /// noteId → 最近一次从服务端取回正文的时间。
+    /// 阅读页用「上一篇/下一篇」连着翻同一批笔记时，每篇会被重新 GET 一遍；
+    /// 60s 内刚取过就直接用缓存，省流量也省等待。
+    private var contentFetchedAt: [String: Date] = [:]
+    private let fetchedLock = NSLock()
+
+    func markContentFetched(_ noteId: String) {
+        fetchedLock.lock()
+        // 简单封顶：条目太多就整体清一次（都是时间戳，丢了只是多拉一次）
+        if contentFetchedAt.count > 300 { contentFetchedAt.removeAll() }
+        contentFetchedAt[noteId] = Date()
+        fetchedLock.unlock()
+    }
+
+    func contentIsFresh(_ noteId: String, within seconds: TimeInterval) -> Bool {
+        fetchedLock.lock(); defer { fetchedLock.unlock() }
+        guard let t = contentFetchedAt[noteId] else { return false }
+        return Date().timeIntervalSince(t) < seconds
+    }
+
     /// 收到内存警告时调用：丢掉纯内存缓存（磁盘缓存保留，重新读一下就有）。
     /// 大图/大附件的内存副本最占地方，先清它。
     func trimMemory() {
@@ -296,6 +318,14 @@ extension NoteCache {
     static let pendingOpsChanged = Notification.Name("trilium.pendingOpsChanged")
     /// 补交时发现冲突（需要用户裁决）——列表顶部的冲突提示据此刷新
     static let conflictDetected = Notification.Name("trilium.conflictDetected")
+    /// 目录结构变了（离线新建/删除补交成功）——目录树据此清缓存重拉
+    static let treeStructureChanged = Notification.Name("trilium.treeStructureChanged")
+
+    private static func postOnMain(_ name: Notification.Name) {
+        // 通知监听方（列表角标/根视图）会改 @State / @Published：
+        // 补交流和 URLSession 回调可能不在主线程，统一挪回主线程再发
+        DispatchQueue.main.async { NotificationCenter.default.post(name: name, object: nil) }
+    }
 
     var pendingOps: [PendingOp] {
         get {
@@ -310,7 +340,7 @@ extension NoteCache {
             pendingCache = newValue
             UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: Self.pendingKey)
             pendingLock.unlock()
-            NotificationCenter.default.post(name: Self.pendingOpsChanged, object: nil)
+            Self.postOnMain(Self.pendingOpsChanged)
         }
     }
 
@@ -327,7 +357,7 @@ extension NoteCache {
         pendingCache = list
         UserDefaults.standard.set(try? JSONEncoder().encode(list), forKey: Self.pendingKey)
         pendingLock.unlock()
-        NotificationCenter.default.post(name: Self.pendingOpsChanged, object: nil)
+        Self.postOnMain(Self.pendingOpsChanged)
     }
 
     func enqueue(_ op: PendingOp) {
@@ -379,7 +409,7 @@ extension NoteCache {
                         if let i = arr.firstIndex(where: { $0.id == op.id }) { arr[i].conflicted = true }
                     }
                     AppLogger.shared.log("补交发现冲突[\(op.kind)] \(op.noteId)：服务端 \(cur) ≠ 我的基准 \(base)，等待裁决")
-                    NotificationCenter.default.post(name: Self.conflictDetected, object: nil)
+                    Self.postOnMain(Self.conflictDetected)
                     allSettled = false
                     idx += 1
                     continue
@@ -413,6 +443,10 @@ extension NoteCache {
                 }
                 list.remove(at: idx)
                 mutatePendingOps { $0.removeAll { $0.id == op.id } }
+                // 离线新建/删除补交成功 → 目录树结构变了（树若开着要立刻能看到）
+                if op.kind == "create" || op.kind == "delete" {
+                    Self.postOnMain(Self.treeStructureChanged)
+                }
                 AppLogger.shared.log("离线补交成功: \(op.kind) \(op.noteId)，剩 \(list.count) 条")
             } catch {
                 AppLogger.shared.log("离线补交失败（保留队列，下次重试）: \(error.localizedDescription)")

@@ -179,7 +179,8 @@ struct FolderNotesView: View {
         if n.isContainer {
             NavigationLink(destination: FolderNotesView(folder: n)) { NoteRow(note: n) }
         } else {
-            NavigationLink(destination: NoteDetailView(note: n)) { NoteRow(note: n) }
+            // 带上当前目录：笔记若被克隆到多处，上一篇/下一篇要按**这条分支**算
+            NavigationLink(destination: NoteDetailView(note: n, parentContextId: folder.noteId)) { NoteRow(note: n) }
         }
     }
 
