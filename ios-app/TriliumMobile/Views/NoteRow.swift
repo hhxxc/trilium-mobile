@@ -24,13 +24,16 @@ struct NoteRow: View {
     let note: Note
     /// 搜索/收藏里传 true：多显示一行「所在目录」，用来区分同名笔记
     var showsLocation: Bool = false
+    /// 搜索关键词：命中片段高亮（用户一眼能看出为什么这条被搜出来）
+    var highlight: String = ""
 
     @State private var summary: String = ""
     @State private var location: String = ""
 
-    init(note: Note, showsLocation: Bool = false) {
+    init(note: Note, showsLocation: Bool = false, highlight: String = "") {
         self.note = note
         self.showsLocation = showsLocation
+        self.highlight = highlight
         _location = State(initialValue: NotePathResolver.cachedParentTitle(for: note) ?? "")
     }
 
@@ -41,7 +44,7 @@ struct NoteRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(note.title.isEmpty ? "（无标题）" : note.title)
+                    Text(highlighted(note.title.isEmpty ? "（无标题）" : note.title))
                         .font(.headline)
                         .foregroundColor(.primary)
                         .lineLimit(1)
@@ -53,7 +56,7 @@ struct NoteRow: View {
                 }
 
                 if !summary.isEmpty {
-                    Text(summary)
+                    Text(highlighted(summary))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -94,6 +97,23 @@ struct NoteRow: View {
                 }
             }
         }
+    }
+
+    /// 关键词高亮：把命中的片段标一层浅色底（不改变字体/颜色，暗色下也看得清）
+    private func highlighted(_ text: String) -> AttributedString {
+        let q = highlight.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return AttributedString(text) }
+        var out = AttributedString()
+        var idx = text.startIndex
+        while let r = text.range(of: q, options: .caseInsensitive, range: idx..<text.endIndex) {
+            out += AttributedString(String(text[idx..<r.lowerBound]))
+            var hit = AttributedString(String(text[r]))
+            hit.backgroundColor = Theme.accent.opacity(0.22)
+            out += hit
+            idx = r.upperBound
+        }
+        out += AttributedString(String(text[idx...]))
+        return out
     }
 
     private func loadSummaryIfNeeded() async {

@@ -124,6 +124,12 @@ struct NoteListView: View {
         !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// 空态里展示的搜索词（太长会撑破一行）
+    private var searchTermShort: String {
+        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return q.count > 12 ? String(q.prefix(12)) + "…" : q
+    }
+
     /// 换模式 / 改搜索词 / 改搜索范围或排序都要重新取数。
     /// ⚠️ 范围与排序必须进 key：以前 key 只有「模式|关键词」，改排序后 key 不变，
     ///    命中缓存就会**一直显示上一次的排序结果**（2026-10-20 加缓存时一并修）。
@@ -495,11 +501,12 @@ struct NoteListView: View {
     }
 
     /// 空态：搜索无结果 → 给历史词；收藏为空 → 教怎么收藏
-    private var emptyState: some View {        VStack(spacing: 12) {
+    private var emptyState: some View {
+        VStack(spacing: 12) {
             Image(systemName: isSearching ? "magnifyingglass"
                               : (browseMode == .favorites ? "star" : "tray"))
                 .font(.system(size: 40)).foregroundColor(.secondary)
-            Text(isSearching ? "未找到相关笔记"
+            Text(isSearching ? "没有找到「\(searchTermShort)」"
                  : (browseMode == .favorites ? "还没有收藏的笔记" : "没有笔记"))
                 .font(.footnote).foregroundColor(.secondary)
             if isSearching && !searchHistory.isEmpty {
@@ -536,7 +543,8 @@ struct NoteListView: View {
     ///    现在收藏放左滑第一个（最顺手），删除同侧但要点击且有二次确认，移动挪到右滑。
     private func listRow(_ note: Note, showsLocation: Bool = false) -> some View {
         NavigationLink(destination: NoteDetailView(note: note)) {
-            NoteRow(note: note, showsLocation: showsLocation)
+            NoteRow(note: note, showsLocation: showsLocation,
+                    highlight: isSearching ? searchQuery.trimmingCharacters(in: .whitespaces) : "")
         }
         // 系统分隔线贴着行左边缘、和标题文字不对齐 → 隐藏，改由 NoteRow 自己画
         .listRowSeparator(.hidden)
