@@ -36,24 +36,40 @@ struct RichTextWebView: UIViewRepresentable {
     let controller: RichTextController
     let onDirty: () -> Void
     let onReady: () -> Void
+    /// 选区当前格式（inline 集合 + block 标签），驱动工具条高亮
+    let onState: (Set<String>, String) -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onDirty: onDirty, onReady: onReady)
+        Coordinator(onDirty: onDirty, onReady: onReady, onState: onState)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         let onDirty: () -> Void
         let onReady: () -> Void
+        let onState: (Set<String>, String) -> Void
 
-        init(onDirty: @escaping () -> Void, onReady: @escaping () -> Void) {
+        init(onDirty: @escaping () -> Void, onReady: @escaping () -> Void,
+             onState: @escaping (Set<String>, String) -> Void) {
             self.onDirty = onDirty
             self.onReady = onReady
+            self.onState = onState
         }
 
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
-            if message.name == "dirty" { onDirty() }
+            switch message.name {
+            case "dirty":
+                onDirty()
+            case "state":
+                // JS 侧已经做了「只有变化才上报」，这里不用再节流
+                guard let arr = message.body as? [Any], arr.count >= 2,
+                      let inline = arr[0] as? [String],
+                      let block = arr[1] as? String else { return }
+                onState(Set(inline), block)
+            default:
+                break
+            }
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -68,6 +84,7 @@ struct RichTextWebView: UIViewRepresentable {
         cfg.processPool = FullWebView.sharedProcessPool
         let ucc = cfg.userContentController
         ucc.add(context.coordinator, name: "dirty")
+        ucc.add(context.coordinator, name: "state")
         let wv = WKWebView(frame: .zero, configuration: cfg)
         wv.navigationDelegate = context.coordinator
         wv.isOpaque = false
@@ -106,6 +123,9 @@ struct RichTextEditorView: View {
     /// 冲突裁决「覆盖」时用：跳过再次比对
     @State private var forceWrite = false
     @State private var baseStamp: String?
+    /// 工具条高亮状态：当前选区是否已加粗 / 在哪个块级标签里
+    @State private var activeFormats: Set<String> = []
+    @State private var activeBlock: String = ""
     @StateObject private var controller = RichTextController()
 
     @Environment(\.dismiss) private var dismiss
@@ -145,7 +165,11 @@ struct RichTextEditorView: View {
             Divider()
             RichTextWebView(pageHTML: pageHTML, controller: controller,
                             onDirty: { dirty = true },
-                            onReady: { ready = true })
+                            onReady: { ready = true },
+                            onState: { formats, block in
+                                activeFormats = formats
+                                activeBlock = block
+                            })
                 .id(reloadID)
         }
         .background(Color(UIColor.systemBackground))
@@ -224,20 +248,20 @@ struct RichTextEditorView: View {
 
     private var formatBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                tool("bold") { controller.js("cmd('bold')") }
-                tool("italic") { controller.js("cmd('italic')") }
-                tool("underline") { controller.js("cmd('underline')") }
-                tool("strikethrough") { controller.js("cmd('strikeThrough')") }
+            HStack(spacing: 2) {
+                tool("bold", active: activeFormats.contains("bold")) { controller.js("cmd('bold')") }
+                tool("italic", active: activeFormats.contains("italic")) { controller.js("cmd('italic')") }
+                tool("underline", active: activeFormats.contains("underline")) { controller.js("cmd('underline')") }
+                tool("strikethrough", active: activeFormats.contains("strikeThrough")) { controller.js("cmd('strikeThrough')") }
                 divider
-                textTool("H1") { controller.js("block('h1')") }
-                textTool("H2") { controller.js("block('h2')") }
-                textTool("H3") { controller.js("block('h3')") }
+                textTool("H1", active: activeBlock == "h1") { controller.js("block('h1')") }
+                textTool("H2", active: activeBlock == "h2") { controller.js("block('h2')") }
+                textTool("H3", active: activeBlock == "h3") { controller.js("block('h3')") }
                 divider
-                tool("list.bullet") { controller.js("cmd('insertUnorderedList')") }
-                tool("list.number") { controller.js("cmd('insertOrderedList')") }
-                tool("text.quote") { controller.js("block('blockquote')") }
-                tool("curlybraces") { controller.js("block('pre')") }
+                tool("list.bullet", active: activeFormats.contains("insertUnorderedList")) { controller.js("cmd('insertUnorderedList')") }
+                tool("list.number", active: activeFormats.contains("insertOrderedList")) { controller.js("cmd('insertOrderedList')") }
+                tool("text.quote", active: activeBlock == "blockquote") { controller.js("block('blockquote')") }
+                tool("curlybraces", active: activeBlock == "pre") { controller.js("block('pre')") }
                 divider
                 tool("link") { showLinkInput = true }
                 tool("arrow.uturn.backward") { controller.js("cmd('undo')") }
@@ -256,23 +280,37 @@ struct RichTextEditorView: View {
             .padding(.horizontal, 2)
     }
 
-    private func tool(_ symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func tool(_ symbol: String, active: Bool = false, action: @escaping () -> Void) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            action()
+        } label: {
             Image(systemName: symbol)
                 .font(.system(size: 16, weight: .medium))
-                .foregroundColor(.primary)
+                .foregroundColor(active ? accent : .primary)
                 .frame(width: 38, height: 36)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(active ? accent.opacity(0.14) : Color.clear)
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(PressableIconStyle())
     }
 
-    private func textTool(_ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func textTool(_ label: String, active: Bool = false, action: @escaping () -> Void) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            action()
+        } label: {
             Text(label)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.primary)
+                .foregroundColor(active ? accent : .primary)
                 .frame(width: 38, height: 36)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(active ? accent.opacity(0.14) : Color.clear)
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(PressableIconStyle())
@@ -379,7 +417,11 @@ struct RichTextEditorView: View {
             }
         }
 
-        NoteCache.shared.saveContent(note.noteId, text: html)
+        // 只改标题时不要用编辑器里的正文覆盖缓存：
+        // 编辑器只持有剥壳后的正文片段，覆盖会把整篇 HTML 文档的样式/头部内容丢掉
+        if cChanged {
+            NoteCache.shared.saveContent(note.noteId, text: html)
+        }
         NotificationCenter.default.post(name: .noteMetaChanged, object: nil)
         if !NoteCache.shared.pendingOps.isEmpty {
             Task { await NoteCache.shared.flushPendingOps() }
@@ -466,13 +508,30 @@ struct RichTextEditorView: View {
         <div id="editor" contenteditable="true" spellcheck="true">\(body)</div>
         <script>
         var __savedRange = null;
+        var __lastState = '';
         function __markDirty() {
           window.webkit && window.webkit.messageHandlers.dirty &&
             window.webkit.messageHandlers.dirty.postMessage(true);
         }
+        // 把当前选区的格式报给原生（工具条高亮）。只在状态变化时发，避免每次敲字都过桥。
+        function __reportState() {
+          var inline = [];
+          ['bold', 'italic', 'underline', 'strikeThrough',
+           'insertUnorderedList', 'insertOrderedList'].forEach(function (c) {
+            try { if (document.queryCommandState(c)) inline.push(c); } catch (e) {}
+          });
+          var block = '';
+          try { block = (document.queryCommandValue('formatBlock') || '').toLowerCase(); } catch (e) {}
+          var st = inline.join(',') + '|' + block;
+          if (st === __lastState) return;
+          __lastState = st;
+          window.webkit && window.webkit.messageHandlers.state &&
+            window.webkit.messageHandlers.state.postMessage([inline, block]);
+        }
         document.addEventListener('selectionchange', function () {
           var s = window.getSelection();
           if (s && s.rangeCount > 0) { __savedRange = s.getRangeAt(0).cloneRange(); }
+          __reportState();
         });
         function __restore() {
           var e = document.getElementById('editor');
@@ -487,6 +546,7 @@ struct RichTextEditorView: View {
           __restore();
           document.execCommand(name, false, (value === undefined ? null : value));
           __markDirty();
+          __reportState();
         }
         function block(tag) {
           __restore();
@@ -495,6 +555,7 @@ struct RichTextEditorView: View {
           var target = (cur.toLowerCase() === tag.toLowerCase()) ? 'div' : tag;
           document.execCommand('formatBlock', false, target);
           __markDirty();
+          __reportState();
         }
         function __getHTML() {
           var e = document.getElementById('editor');

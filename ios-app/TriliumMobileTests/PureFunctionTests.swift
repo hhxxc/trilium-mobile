@@ -107,4 +107,17 @@ final class PureFunctionTests: XCTestCase {
     func testEditableBodyKeepsFragment() {
         XCTAssertEqual(RichTextEditorView.editableBody(from: "<p>a</p>"), "<p>a</p>")
     }
+
+    // MARK: - 富文本编辑页（脚本必须闭合、桥接名要对）
+
+    func testRichEditorPageStructure() {
+        let html = RichTextEditorView.pageHTML(body: "<p>x</p>", fontScale: 1.0)
+        let opens = html.components(separatedBy: "<script").count - 1
+        let closes = html.components(separatedBy: "</script>").count - 1
+        XCTAssertEqual(opens, closes)
+        XCTAssertTrue(html.contains("contenteditable=\"true\""))
+        XCTAssertTrue(html.contains("messageHandlers.state"))
+        XCTAssertTrue(html.contains("messageHandlers.dirty"))
+        XCTAssertTrue(html.contains("__getHTML"))
+    }
 }
