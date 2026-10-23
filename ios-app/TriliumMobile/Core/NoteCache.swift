@@ -133,6 +133,43 @@ final class NoteCache {
         AppLogger.shared.log("内存警告：已清空内存缓存（磁盘缓存保留）")
     }
 
+    // MARK: - 富文本编辑草稿（未保存内容，放 Application Support，别被「清除缓存」清掉）
+
+    private var draftDir: URL {
+        fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("TriliumDrafts", isDirectory: true)
+    }
+
+    private func draftURL(_ noteId: String) -> URL {
+        draftDir.appendingPathComponent("\(noteId).html")
+    }
+
+    func saveEditorDraft(_ noteId: String, html: String) {
+        guard !noteId.isEmpty else { return }
+        ioQueue.async { [weak self] in
+            guard let self = self else { return }
+            try? self.fm.createDirectory(at: self.draftDir, withIntermediateDirectories: true)
+            try? html.write(to: self.draftURL(noteId), atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// 取草稿（含保存时间）；没有就返回 nil
+    func loadEditorDraft(_ noteId: String) -> (html: String, date: Date)? {
+        guard !noteId.isEmpty else { return nil }
+        let url = draftURL(noteId)
+        guard let html = try? String(contentsOf: url, encoding: .utf8), !html.isEmpty else { return nil }
+        let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date()
+        return (html, date)
+    }
+
+    func clearEditorDraft(_ noteId: String) {
+        guard !noteId.isEmpty else { return }
+        ioQueue.async { [weak self] in
+            guard let self = self else { return }
+            try? self.fm.removeItem(at: self.draftURL(noteId))
+        }
+    }
+
     // MARK: - 二进制（图片/附件）
 
     private func blobURL(_ noteId: String) -> URL {

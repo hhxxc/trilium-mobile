@@ -119,5 +119,6 @@ final class PureFunctionTests: XCTestCase {
         XCTAssertTrue(html.contains("messageHandlers.state"))
         XCTAssertTrue(html.contains("messageHandlers.dirty"))
         XCTAssertTrue(html.contains("__getHTML"))
+        XCTAssertTrue(html.contains("__insertLink"))
     }
 }

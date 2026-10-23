@@ -126,6 +126,10 @@ struct RichTextEditorView: View {
     /// 工具条高亮状态：当前选区是否已加粗 / 在哪个块级标签里
     @State private var activeFormats: Set<String> = []
     @State private var activeBlock: String = ""
+    /// 没保存就退出（崩溃/被杀）时留下的草稿
+    @State private var draftHTML: String?
+    @State private var draftDate: Date?
+    @State private var draftWork: DispatchWorkItem?
     @StateObject private var controller = RichTextController()
 
     @Environment(\.dismiss) private var dismiss
@@ -152,6 +156,31 @@ struct RichTextEditorView: View {
             header
             Divider()
             titleField
+            if draftHTML != nil {
+                // 上次没保存就退出了：给个明确的恢复入口，别让用户白写
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath").foregroundColor(.orange)
+                    Text("发现 \(Self.draftTimeText(draftDate)) 的未保存草稿")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("恢复") { restoreDraft() }
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(accent)
+                    Button {
+                        NoteCache.shared.clearEditorDraft(note.noteId)
+                        draftHTML = nil
+                        draftDate = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.footnote)
+                            .foregroundColor(Color(UIColor.tertiaryLabel))
+                    }
+                    .accessibilityLabel("丢弃草稿")
+                }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 6)
+            }
             if !errorMsg.isEmpty {
                 Text(errorMsg)
                     .font(.footnote)
@@ -164,7 +193,10 @@ struct RichTextEditorView: View {
             formatBar
             Divider()
             RichTextWebView(pageHTML: pageHTML, controller: controller,
-                            onDirty: { dirty = true },
+                            onDirty: {
+                                dirty = true
+                                scheduleDraftSave()
+                            },
                             onReady: { ready = true },
                             onState: { formats, block in
                                 activeFormats = formats
@@ -173,9 +205,13 @@ struct RichTextEditorView: View {
                 .id(reloadID)
         }
         .background(Color(UIColor.systemBackground))
+        .onAppear { checkDraft() }
         .interactiveDismissDisabled(dirty || titleChanged)
         .confirmationDialog("放弃未保存的修改？", isPresented: $showDiscard, titleVisibility: .visible) {
-            Button("放弃修改", role: .destructive) { dismiss() }
+            Button("放弃修改", role: .destructive) {
+                NoteCache.shared.clearEditorDraft(note.noteId)
+                dismiss()
+            }
             Button("继续编辑", role: .cancel) {}
         }
         .confirmationDialog("这篇笔记在别处被修改过", isPresented: $showConflict, titleVisibility: .visible) {
@@ -332,8 +368,11 @@ struct RichTextEditorView: View {
                     showLinkInput = false
                     linkDraft = ""
                     guard !url.isEmpty else { return }
-                    let escaped = url.replacingOccurrences(of: "'", with: "\\'")
-                    controller.js("cmd('createLink', '\(escaped)')")
+                    // 用 JSON 编码成合法的 JS 字符串字面量：URL 里有引号/反斜杠也不会把脚本弄坏
+                    if let data = try? JSONEncoder().encode(url),
+                       let literal = String(data: data, encoding: .utf8) {
+                        controller.js("__insertLink(\(literal))")
+                    }
                 } label: {
                     // ⚠️ 不能用 .fontWeight(.semibold)：iOS 16+ API，本项目底线 iOS 15
                     Text("插入").font(.body.weight(.semibold))
@@ -345,6 +384,50 @@ struct RichTextEditorView: View {
     }
 
     // MARK: - 保存
+
+    /// 草稿时间文案（今天只显示时分）
+    static func draftTimeText(_ date: Date?) -> String {
+        guard let date = date else { return "上次" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = Calendar.current.isDateInToday(date) ? "HH:mm" : "M月d日 HH:mm"
+        return f.string(from: date)
+    }
+
+    private func checkDraft() {
+        guard draftHTML == nil,
+              let d = NoteCache.shared.loadEditorDraft(note.noteId) else { return }
+        // 跟当前服务端内容一样 → 没有恢复价值，直接清掉
+        guard d.html != initialHTML else {
+            NoteCache.shared.clearEditorDraft(note.noteId)
+            return
+        }
+        draftHTML = d.html
+        draftDate = d.date
+    }
+
+    /// 输入停顿 2.5s 存一次草稿（Application Support，清缓存也不会丢）
+    private func scheduleDraftSave() {
+        draftWork?.cancel()
+        let work = DispatchWorkItem {
+            controller.currentHTML { html in
+                guard !html.isEmpty else { return }
+                NoteCache.shared.saveEditorDraft(note.noteId, html: html)
+            }
+        }
+        draftWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: work)
+    }
+
+    private func restoreDraft() {
+        guard let html = draftHTML else { return }
+        pageHTML = Self.pageHTML(body: html, fontScale: settings.readerFontScale)
+        ready = false
+        reloadID = UUID()
+        dirty = true
+        draftHTML = nil
+        draftDate = nil
+    }
 
     private func cancelTapped() {
         guard ready, controller.webView != nil else { dismiss(); return }
@@ -379,6 +462,7 @@ struct RichTextEditorView: View {
         let cChanged = html != initialHTML
 
         guard tChanged || cChanged else {
+            NoteCache.shared.clearEditorDraft(note.noteId)
             busy = false
             dismiss()
             return
@@ -422,6 +506,8 @@ struct RichTextEditorView: View {
         if cChanged {
             NoteCache.shared.saveContent(note.noteId, text: html)
         }
+        // 已经落库（或已进离线队列）→ 草稿使命结束
+        NoteCache.shared.clearEditorDraft(note.noteId)
         NotificationCenter.default.post(name: .noteMetaChanged, object: nil)
         if !NoteCache.shared.pendingOps.isEmpty {
             Task { await NoteCache.shared.flushPendingOps() }
@@ -554,6 +640,27 @@ struct RichTextEditorView: View {
           try { cur = document.queryCommandValue('formatBlock') || ''; } catch (err) {}
           var target = (cur.toLowerCase() === tag.toLowerCase()) ? 'div' : tag;
           document.execCommand('formatBlock', false, target);
+          __markDirty();
+          __reportState();
+        }
+        // 插入链接：有选中文字 → 变成链接；没选中 → 直接把 URL 作为链接文字插进去
+        // （execCommand('createLink') 在折叠选区上什么都不做，以前点了像没反应）
+        function __insertLink(url) {
+          __restore();
+          var s = window.getSelection();
+          if (s && s.isCollapsed) {
+            var a = document.createElement('a');
+            a.href = url;
+            a.textContent = url;
+            var r = s.getRangeAt(0);
+            r.insertNode(a);
+            r.setStartAfter(a);
+            r.collapse(true);
+            s.removeAllRanges();
+            s.addRange(r);
+          } else {
+            document.execCommand('createLink', false, url);
+          }
           __markDirty();
           __reportState();
         }
