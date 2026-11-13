@@ -78,15 +78,76 @@ final class NoteCache {
         contentDir.appendingPathComponent("\(noteId).txt")
     }
 
-    func saveContent(_ noteId: String, text: String) {
+    func saveContent(_ noteId: String, text: String, stamp: String? = nil) {
         try? text.write(to: contentURL(noteId), atomically: true, encoding: .utf8)
         // 内容变了，列表摘要缓存要失效（否则编辑器改完回列表还是旧摘要）
         summaryCache.removeObject(forKey: noteId as NSString)
+        // 编辑器本地保存（PUT 已成功但不知道服务端新戳）不传 stamp = 保持旧戳，
+        // 下次打开版本戳对不上会自动重拉一次，正确性靠这个兜底
+        if let stamp = stamp, !stamp.isEmpty { saveStamp(noteId, stamp: stamp) }
         schedulePrune()
     }
 
     func loadContent(_ noteId: String) -> String? {
         try? String(contentsOf: contentURL(noteId), encoding: .utf8)
+    }
+
+    // MARK: - 版本戳（缓存与服务端是否一致）
+
+    /// noteId → 服务端版本戳（utcDateModified）。缓存正文/附件时一并记录，
+    /// 下次打开先拉轻量元数据比对：戳没变就不重新下载（正文几百 KB、图片几 MB，
+    /// 元数据才 ~1KB）——「打开过的笔记不重复云加载，服务端改过才同步」。
+    /// 改标题/正文/附件都会让 utcDateModified 变，一个戳覆盖全部变更。
+    private var stamps: [String: String]?
+    private let stampsLock = NSLock()
+    private var stampsURL: URL { root.appendingPathComponent("stamps.json") }
+
+    /// 首次访问从磁盘加载（锁内调用）
+    private func loadedStamps() -> [String: String] {
+        if let s = stamps { return s }
+        let s = (try? Data(contentsOf: stampsURL))
+            .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        stamps = s
+        return s
+    }
+
+    func cachedStamp(_ noteId: String) -> String? {
+        stampsLock.lock(); defer { stampsLock.unlock() }
+        return loadedStamps()[noteId]
+    }
+
+    /// 记录版本戳并异步落盘（空值忽略）
+    func saveStamp(_ noteId: String, stamp: String?) {
+        guard let stamp = stamp, !stamp.isEmpty, !noteId.isEmpty else { return }
+        stampsLock.lock()
+        var s = loadedStamps()
+        s[noteId] = stamp
+        stamps = s
+        let data = try? JSONEncoder().encode(s)
+        stampsLock.unlock()
+        writeStamps(data)
+    }
+
+    /// 删掉单条戳（笔记删除 / 冲突裁决丢弃本地版后，下次必须重新拉服务端）
+    func removeStamp(_ noteId: String) {
+        stampsLock.lock()
+        var s = loadedStamps()
+        guard s[noteId] != nil else { stampsLock.unlock(); return }
+        s[noteId] = nil
+        stamps = s
+        let data = try? JSONEncoder().encode(s)
+        stampsLock.unlock()
+        writeStamps(data)
+    }
+
+    /// 落盘走 IO 队列：stamps.json 很小，但别占主线程；
+    /// 与 clearAll 的 removeItem 同队列串行，不会「清完又被写回」
+    private func writeStamps(_ data: Data?) {
+        guard let data = data else { return }
+        ioQueue.async { [weak self] in
+            guard let self = self else { return }
+            try? data.write(to: self.stampsURL, options: .atomic)
+        }
     }
 
     // MARK: - 列表摘要缓存（内存）
@@ -176,7 +237,7 @@ final class NoteCache {
         blobDir.appendingPathComponent(noteId)
     }
 
-    func saveBlob(_ noteId: String, data: Data) {
+    func saveBlob(_ noteId: String, data: Data, stamp: String? = nil) {
         // 先放内存：调用方紧接着可能 loadBlob（图片笔记首屏），不落一次磁盘
         blobCache.setObject(data as NSData, forKey: noteId as NSString, cost: data.count)
         // 大附件写盘（几十 MB）别占主线程 —— 以前同步写，下载完那一下会明显卡顿
@@ -185,6 +246,7 @@ final class NoteCache {
             try? data.write(to: self.blobURL(noteId))
             self.pruneIfNeeded()
         }
+        if let stamp = stamp, !stamp.isEmpty { saveStamp(noteId, stamp: stamp) }
     }
 
     /// 容量巡检节流：最多 60s 一次，且整体挪到 IO 队列。
@@ -252,10 +314,11 @@ final class NoteCache {
 
     // MARK: - 单笔记清理
 
-    /// 删除笔记后清掉它的本地缓存（内容 + 二进制）
+    /// 删除笔记后清掉它的本地缓存（内容 + 二进制 + 版本戳）
     func remove(_ noteId: String) {
         blobCache.removeObject(forKey: noteId as NSString)
         summaryCache.removeObject(forKey: noteId as NSString)
+        removeStamp(noteId)
         // 走 IO 队列：和 saveBlob 的异步写串行，避免「刚删完又被写回来」
         ioQueue.async { [weak self] in
             guard let self = self else { return }
@@ -284,6 +347,11 @@ final class NoteCache {
             try? fm.createDirectory(at: contentDir, withIntermediateDirectories: true)
             try? fm.createDirectory(at: blobDir, withIntermediateDirectories: true)
         }
+        // stamps.json 在 root 里被上面删掉了；内存表也必须重置，
+        // 否则清完缓存后版本戳还在内存里，会「以为有缓存」而跳过重新下载
+        stampsLock.lock()
+        stamps = [:]
+        stampsLock.unlock()
         summaryCache.removeAllObjects()
         blobCache.removeAllObjects()
         // 缓存清了，待同步操作必须保留（是真实数据不是缓存）
@@ -513,6 +581,8 @@ extension NoteCache {
     func resolveDropMine(_ opId: String) {
         let op = pendingOps.first { $0.id == opId }
         mutatePendingOps { $0.removeAll { $0.id == opId } }
+        // 缓存里可能还是「被丢弃的本地编辑」：清掉版本戳，下次打开强制重拉服务端版
+        if let nid = op?.noteId { removeStamp(nid) }
         AppLogger.shared.log("冲突裁决[丢弃我的]：\(op?.kind ?? "?") \(op?.noteId ?? opId)")
     }
 }

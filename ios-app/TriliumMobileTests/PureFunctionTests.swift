@@ -127,6 +127,38 @@ final class PureFunctionTests: XCTestCase {
         XCTAssertEqual(ContentWebView.Coordinator.intValue("x"), 0)
     }
 
+    // MARK: - NoteCache 版本戳（打开过的笔记不重复云加载，改过才同步）
+
+    func testStampSaveAndOverwrite() {
+        NoteCache.shared.saveStamp("test-stamp-1", stamp: "v1")
+        XCTAssertEqual(NoteCache.shared.cachedStamp("test-stamp-1"), "v1")
+        NoteCache.shared.saveStamp("test-stamp-1", stamp: "v2")
+        XCTAssertEqual(NoteCache.shared.cachedStamp("test-stamp-1"), "v2")
+    }
+
+    func testStampEmptyIsIgnored() {
+        // 空戳（服务端没返回 utcDateModified）不能覆盖已有记录，也不能新增
+        NoteCache.shared.saveStamp("test-stamp-2", stamp: "")
+        XCTAssertNil(NoteCache.shared.cachedStamp("test-stamp-2"))
+        NoteCache.shared.saveStamp("test-stamp-2", stamp: nil)
+        XCTAssertNil(NoteCache.shared.cachedStamp("test-stamp-2"))
+    }
+
+    func testSaveContentRecordsStamp() {
+        NoteCache.shared.saveContent("test-stamp-3", text: "x", stamp: "s1")
+        XCTAssertEqual(NoteCache.shared.cachedStamp("test-stamp-3"), "s1")
+        // 编辑器本地保存（不传戳）不能动已记录的版本戳：
+        // 服务端已改成新戳，保持旧戳才能让下次打开发现不一致并重拉
+        NoteCache.shared.saveContent("test-stamp-3", text: "y")
+        XCTAssertEqual(NoteCache.shared.cachedStamp("test-stamp-3"), "s1")
+    }
+
+    func testRemoveClearsStamp() {
+        NoteCache.shared.saveStamp("test-stamp-4", stamp: "v")
+        NoteCache.shared.remove("test-stamp-4")
+        XCTAssertNil(NoteCache.shared.cachedStamp("test-stamp-4"))
+    }
+
     // MARK: - 富文本编辑：整篇 HTML → 可编辑片段
 
     func testEditableBodyStripsFullDocument() {

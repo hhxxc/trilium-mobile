@@ -681,12 +681,15 @@ struct NoteDetailView: View {
         return p
     }
 
-    /// 加载正文：缓存先上屏（秒开）+ 网络静默刷新（拿到最新就替换）。
+    /// 加载正文：缓存先上屏（秒开）+ 版本戳校验（元数据 ~1KB）+ 仅在服务端改过时拉新。
     /// force=true：跳过缓存直拉网络（编辑保存后必须用，否则读到旧缓存）。
     ///
     /// ⚠️ 2026-10-22 深度优化：旧版缓存命中就直接 return，**永远不打网络** ——
     ///    桌面端改过的笔记，在手机上会一直显示旧内容，直到用户手动去编辑一次。
     ///    现在是缓存优先渲染 + 后台比对刷新，打开速度和内容新鲜度都要。
+    /// ⚠️ 2026-11-13 版本戳优化：以前超过 60s 每次打开都整篇重拉（图片整张重下）；
+    ///    现在缓存时记下 utcDateModified，打开只拉元数据比对，戳没变就不下载。
+    ///    桌面端改过 → 戳变 → 拉新（同步问题由这一步兜住）。
     private func load(force: Bool = false) async {
         if !force { loading = true }
 
@@ -722,26 +725,51 @@ struct NoteDetailView: View {
 
         // 2. 网络刷新（缓存命中时静默：不闪 loading，失败保留屏上内容）
         do {
+            // 2.1 先拉轻量元数据（~1KB）拿版本戳：utcDateModified 覆盖标题/正文/附件全部变更。
+            //     以前这里直接拉正文（几百 KB～几 MB），图片更是整张重下 ——
+            //     现在戳没变就复用缓存，只有服务端真改过才下载。
+            let fresh = try await ETAPIClient.shared.getNote(note.noteId)
+            let stamp = fresh.versionStamp
+            let titleChanged = fresh.title != displayTitle
+
+            // 2.2 戳没变 → 服务端没改过，缓存就是最新（servedFromCache 保证屏上真有内容；
+            //     缓存文件被容量淘汰时 servedFromCache=false，会走下面正常拉取）
+            if !force, servedFromCache,
+               let s = stamp, !s.isEmpty,
+               let cached = NoteCache.shared.cachedStamp(note.noteId), cached == s {
+                NoteCache.shared.markContentFetched(note.noteId)
+                contentLoaded = true
+                errorMsg = ""
+                return
+            }
+
+            // 2.3 变了 / 首次打开 / 编辑返回强刷：拉正文，缓存时带上新版本戳
             if force {
-                // 顺带拉最新元数据：编辑器里改过标题/类型时同步显示
-                let fresh = try await ETAPIClient.shared.getNote(note.noteId)
                 freshTitle = fresh.title
                 freshType = fresh.type
                 // 标题变了要重拼（HTML 的 <h1> 用的就是 displayTitle）
                 rebuildRenderedHTML()
+            } else if titleChanged {
+                // 列表数据可能带着旧标题进来（桌面端改过标题但正文戳也变，会一并拉新正文）
+                freshTitle = fresh.title
+                freshType = fresh.type
             }
             switch note.type {
             case "image":
                 // 不 try? 吞错：失败让它抛到下面 catch，记日志 + 显示错误
                 let data = try await ETAPIClient.shared.getContentData(note.noteId)
                 imageData = data
-                NoteCache.shared.saveBlob(note.noteId, data: data)
+                NoteCache.shared.saveBlob(note.noteId, data: data, stamp: stamp)
             case "text", "code", "render", "mermaid":
                 let raw = try await ETAPIClient.shared.getContent(note.noteId)
-                // 内容没变就不改 state（避免无意义的 body 重算 + WebView 重新比对）
-                if textContent != raw || renderedHTML.isEmpty {
+                let changed = textContent != raw
+                if changed || renderedHTML.isEmpty {
                     textContent = raw
-                    NoteCache.shared.saveContent(note.noteId, text: raw)
+                    NoteCache.shared.saveContent(note.noteId, text: raw, stamp: stamp)
+                } else if let s = stamp, !s.isEmpty {
+                    NoteCache.shared.saveStamp(note.noteId, stamp: s)   // 内容没变也补记戳
+                }
+                if changed || renderedHTML.isEmpty || titleChanged {
                     rebuildRenderedHTML()
                 }
                 contentLoaded = true
