@@ -32,6 +32,9 @@ enum NoteHTML {
       @media (prefers-color-scheme: dark) {
         #to-top-btn { background: rgba(58,58,60,0.94); color: #eee; }
       }
+      /* 页内查找命中高亮：tf-hit = 全部命中，tf-cur = 当前跳到的那个 */
+      mark.tf-hit { background: rgba(255, 213, 0, 0.45); color: inherit; border-radius: 2px; }
+      mark.tf-cur { background: #ff9f0a; color: #fff; border-radius: 2px; }
     </style>
     <script>
     // 长按图片 600ms → 通知原生保存到相册（禁掉系统 callout，统一走自家流程）
@@ -127,6 +130,74 @@ enum NoteHTML {
       img.style.borderRadius = '6px';
       if (!img.alt) img.alt = '图片未加载（离线？）';
     }, true);
+    </script>
+    <script>
+    // 页内查找（阅读页放大镜）：__triliumFind.run(q) 高亮全部命中并跳第一个，
+    // step(±1) 前后跳并返回 [当前序号, 总数]，clear() 还原 DOM。
+    // 纯 DOM 实现：WKWebView 原生 find API 要 iOS 16，CSS Highlight API 要 17。
+    (function() {
+      var marks = [], idx = -1;
+      function clear() {
+        for (var i = 0; i < marks.length; i++) {
+          var m = marks[i];
+          if (m.parentNode) m.parentNode.replaceChild(document.createTextNode(m.textContent), m);
+        }
+        // 合并被拆散的文本节点：反复查找后节点会碎片化，越搜越慢
+        if (document.body) document.body.normalize();
+        marks = []; idx = -1;
+      }
+      function run(q) {
+        clear();
+        if (!q || !document.body) return 0;
+        var needle = q.toLowerCase();
+        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+          acceptNode: function(n) {
+            if (!n.nodeValue || !n.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+            var p = n.parentElement;
+            if (!p) return NodeFilter.FILTER_REJECT;
+            var tag = p.tagName;
+            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'MARK') return NodeFilter.FILTER_REJECT;
+            // 代码块「复制」按钮、回到顶部按钮的文字不该被搜出来
+            if (p.closest('button') || p.closest('#to-top-btn')) return NodeFilter.FILTER_REJECT;
+            // SVG 文字节点里插 HTML 的 <mark> 会破坏渲染，直接跳过
+            if (p.closest('svg')) return NodeFilter.FILTER_REJECT;
+            return NodeFilter.FILTER_ACCEPT;
+          }
+        });
+        var nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        for (var i = 0; i < nodes.length; i++) {
+          var node = nodes[i], text = node.nodeValue, lower = text.toLowerCase();
+          var pos = 0, j, frag = null;
+          while ((j = lower.indexOf(needle, pos)) !== -1) {
+            if (!frag) frag = document.createDocumentFragment();
+            if (j > pos) frag.appendChild(document.createTextNode(text.slice(pos, j)));
+            var m = document.createElement('mark');
+            m.className = 'tf-hit';
+            m.textContent = text.slice(j, j + needle.length);
+            frag.appendChild(m);
+            marks.push(m);
+            pos = j + needle.length;
+          }
+          if (frag) {
+            if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
+            node.parentNode.replaceChild(frag, node);
+          }
+        }
+        if (marks.length) return step(1)[1];
+        return 0;
+      }
+      function step(dir) {
+        if (!marks.length) return [0, 0];
+        if (idx >= 0 && marks[idx]) marks[idx].classList.remove('tf-cur');
+        idx = (idx + dir + marks.length) % marks.length;
+        var m = marks[idx];
+        m.classList.add('tf-cur');
+        m.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return [idx + 1, marks.length];
+      }
+      window.__triliumFind = { run: run, step: step, clear: clear };
+    })();
     </script>
     """
 

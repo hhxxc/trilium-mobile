@@ -52,6 +52,18 @@ struct NoteDetailView: View {
     @State private var parentTitle: String = ""
     @State private var isLoadingSiblings = true
 
+    // 页内查找（工具栏放大镜）：防抖输入 + 信号驱动 + 命中计数
+    @State private var showFind = false
+    @State private var findText = ""
+    @State private var findSignal: FindSignal?
+    @State private var findSeq = 0
+    /// 当前命中（1 起；0 = 无）
+    @State private var findIndex = 0
+    /// 命中总数：nil = 还没搜；0 = 搜了没结果
+    @State private var findTotal: Int?
+    @State private var findDebounce: Task<Void, Never>?
+    @FocusState private var findFocused: Bool
+
     /// 同层上一篇 / 下一篇（依赖 siblings 的服务端 childNoteIds 顺序）
     private var prevSibling: Note? {
         guard let i = siblings.firstIndex(where: { $0.noteId == note.noteId }), i > 0 else { return nil }
@@ -91,6 +103,79 @@ struct NoteDetailView: View {
 
     private var displayTitle: String { freshTitle.isEmpty ? note.title : freshTitle }
 
+    /// 页内查找条：输入防抖 0.3s 即搜、上下箭头逐个跳、回车跳下一个、✕ 关闭并清高亮。
+    /// （放 .top safeAreaInset：本页标题是 .inline，不会被大标题盖住）
+    private var findBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.callout)
+                .foregroundColor(.secondary)
+            TextField("查找", text: $findText)
+                .font(.callout)
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+                .submitLabel(.search)
+                .onSubmit { sendFindSignal(.next) }
+                .focused($findFocused)
+            if let total = findTotal {
+                Text(total > 0 ? "\(max(findIndex, 1))/\(total)" : "无结果")
+                    .font(.footnote.monospacedDigit())
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Button {
+                sendFindSignal(.prev)
+            } label: {
+                Image(systemName: "chevron.up")
+                    .frame(width: 32, height: 40)
+            }
+            .disabled((findTotal ?? 0) == 0)
+            Button {
+                sendFindSignal(.next)
+            } label: {
+                Image(systemName: "chevron.down")
+                    .frame(width: 32, height: 40)
+            }
+            .disabled((findTotal ?? 0) == 0)
+            Button {
+                closeFind()
+            } label: {
+                Image(systemName: "xmark")
+                    .frame(width: 32, height: 40)
+            }
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 12)
+        .frame(height: 44)   // 热区红线 ≥44pt
+        .background(.bar)
+    }
+
+    private func sendFindSignal(_ action: FindAction) {
+        findSeq += 1
+        findSignal = FindSignal(action: action, seq: findSeq)
+    }
+
+    private func closeFind() {
+        showFind = false
+        findFocused = false
+        findText = ""          // onChange 对空文本发 .clear，清掉 JS 高亮
+        findTotal = nil
+        findIndex = 0
+    }
+
+    private func toggleFind() {
+        if showFind {
+            closeFind()
+        } else {
+            showFind = true
+            findTotal = nil
+            findIndex = 0
+            // 键盘要等查找条真出现后才能聚焦，立刻设会被本轮渲染冲掉
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { findFocused = true }
+            if !findText.isEmpty { sendFindSignal(.search(findText)) }
+        }
+    }
+
     /// 阅读字号档位（⚠️ 别用 tuple 数组 + id:\.0 —— Swift keypath 不支持 tuple 元素，编译炸）
     private struct FontOption: Identifiable {
         let scale: Double
@@ -120,6 +205,10 @@ struct NoteDetailView: View {
         }
         .navigationTitle(displayTitle.isEmpty ? "笔记" : displayTitle)
         .navigationBarTitleDisplayMode(.inline)
+        // 页内查找条（放大镜开关；.inline 标题下不会被盖）
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if showFind { findBar }
+        }
         // 底部操作条：上一篇 / 父路径 / 下一篇（拇指区，不用回列表再点）
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if !isLoadingSiblings && (prevSibling != nil || nextSibling != nil || !parentTitle.isEmpty) {
@@ -129,6 +218,11 @@ struct NoteDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 if note.type == "text" || note.type == "code" || note.type == "render" {
+                    // 页内查找：放大镜打开顶部查找条，快速定位正文文字
+                    Button { toggleFind() } label: {
+                        Image(systemName: "magnifyingglass")
+                    }
+                    .accessibilityLabel("查找文字")
                     // 大纲目录：JS 提取 h1~h3 上报，非空才显示入口
                     if !outlineItems.isEmpty {
                         Button { showOutline = true } label: {
@@ -249,6 +343,20 @@ struct NoteDetailView: View {
         .onChange(of: settings.readerFontScale) { _ in
             rebuildRenderedHTML()
         }
+        // 页内查找：输入防抖 0.3s 即搜；清空立即清高亮
+        .onChange(of: findText) { q in
+            findDebounce?.cancel()
+            findTotal = nil
+            if q.isEmpty {
+                sendFindSignal(.clear)
+            } else {
+                findDebounce = Task {
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    guard !Task.isCancelled else { return }
+                    sendFindSignal(.search(q))
+                }
+            }
+        }
     }
 
     private func openLinkedNote(_ noteId: String) {
@@ -293,7 +401,13 @@ struct NoteDetailView: View {
         case "file":
             fileView
         case "code", "mermaid", "render", "text":
-            ContentWebView(html: renderedHTML, noteId: note.noteId, onOpenNote: openLinkedNote, onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump)
+            ContentWebView(html: renderedHTML, noteId: note.noteId, onOpenNote: openLinkedNote,
+                           onOutline: { items in outlineItems = items }, jumpToIndex: outlineJump,
+                           findSignal: findSignal,
+                           onFindResult: { i, t in
+                               findIndex = i
+                               findTotal = t
+                           })
         default:
             fallback(typeName: note.type, icon: "doc.text")
         }

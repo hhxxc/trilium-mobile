@@ -97,6 +97,36 @@ final class PureFunctionTests: XCTestCase {
         XCTAssertEqual(opens, closes, "增强脚本里 <script> 与 </script> 必须成对，否则整段不执行")
     }
 
+    // MARK: - 页内查找（阅读页放大镜）
+
+    func testFindScriptPresentInWrappedHTML() {
+        let html = NoteHTML.wrap(title: "t", raw: "<p>x</p>", noteType: "text")
+        XCTAssertTrue(html.contains("window.__triliumFind"), "查找脚本必须随增强脚本注入")
+        XCTAssertTrue(html.contains("tf-hit"), "命中高亮样式必须存在")
+        XCTAssertTrue(html.contains("tf-cur"), "当前命中样式必须存在")
+    }
+
+    func testJSLiteralEscapesSpecials() {
+        // 关键词含引号/反斜杠/换行时必须是合法 JS 字符串字面量
+        XCTAssertEqual(ContentWebView.Coordinator.jsLiteral(#"a"b\c"# + "\nd"), "\"a\\\"b\\\\c\\nd\"")
+        XCTAssertEqual(ContentWebView.Coordinator.jsLiteral(""), "\"\"")
+    }
+
+    func testIntPairParsing() {
+        XCTAssertEqual(ContentWebView.Coordinator.intPair([1, 12] as [Any]).1, 12)
+        XCTAssertEqual(ContentWebView.Coordinator.intPair([NSNumber(value: 3), NSNumber(value: 7)]).0, 3)
+        // 非数组 / 长度不足 → 0/0，别崩
+        XCTAssertEqual(ContentWebView.Coordinator.intPair("x").0, 0)
+        XCTAssertEqual(ContentWebView.Coordinator.intPair(nil).1, 0)
+        XCTAssertEqual(ContentWebView.Coordinator.intPair([NSNumber(value: 1)]).1, 0)
+    }
+
+    func testIntValueParsing() {
+        XCTAssertEqual(ContentWebView.Coordinator.intValue(NSNumber(value: 5)), 5)
+        XCTAssertEqual(ContentWebView.Coordinator.intValue(nil), 0)
+        XCTAssertEqual(ContentWebView.Coordinator.intValue("x"), 0)
+    }
+
     // MARK: - 富文本编辑：整篇 HTML → 可编辑片段
 
     func testEditableBodyStripsFullDocument() {

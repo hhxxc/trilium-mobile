@@ -6,6 +6,21 @@ import Photos
 /// 本地 HTML 渲染（loadHTMLString，不加载 Trilium 桌面页）。
 /// baseURL 指向服务器：笔记里的相对路径图片/附件才能加载。
 /// 传 noteId 时记忆阅读进度：重进笔记自动滚到上次位置。
+
+/// 页内查找动作（放大镜查找条驱动）
+enum FindAction: Equatable {
+    case search(String)   // 高亮全部命中并跳第一个
+    case next             // 跳下一个命中
+    case prev             // 跳上一个命中
+    case clear            // 清掉高亮还原 DOM
+}
+
+/// 查找信号：action + 自增 seq —— 同样的动作（连点「下一个」）也能重复触发
+struct FindSignal: Equatable {
+    let action: FindAction
+    let seq: Int
+}
+
 struct ContentWebView: UIViewRepresentable {
     let html: String
     var noteId: String = ""
@@ -15,32 +30,91 @@ struct ContentWebView: UIViewRepresentable {
     var onOutline: (([OutlineItem]) -> Void)? = nil
     /// 跳转到大纲第 index 项（变化时驱动 evaluateJavaScript 滚动）
     var jumpToIndex: Int? = nil
+    /// 页内查找信号（变化时驱动 JS；结果回调 (当前序号 1 起, 总数)）
+    var findSignal: FindSignal? = nil
+    var onFindResult: ((Int, Int) -> Void)? = nil
     /// ⚠️ 正文是网页：它的 `prefers-color-scheme` 只认 **UIKit 外观**，
     ///    SwiftUI 的 preferredColorScheme 不会自动透传进来（界面黑了、正文还白）。
     ///    靠这个环境变量把当前外观显式塞给 WKWebView。
     @Environment(\.colorScheme) private var colorScheme
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(noteId: noteId, onOpenNote: onOpenNote, onOutline: onOutline)
+        Coordinator(noteId: noteId, onOpenNote: onOpenNote, onOutline: onOutline, onFindResult: onFindResult)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, UIScrollViewDelegate, WKScriptMessageHandler {
         let noteId: String
         let onOpenNote: ((String) -> Void)?
         let onOutline: (([OutlineItem]) -> Void)?
+        let onFindResult: ((Int, Int) -> Void)?
         var lastHTML = ""
         var hasRestored = false
         var lastSaveTime: TimeInterval = 0
         var lastJump: Int?
+        /// 已执行过的最后一个查找信号（去重）
+        var lastFindSignal: FindSignal?
+        /// 页面加载期间到达的查找信号（didFinish 后补执行）
+        var pendingFind: FindSignal?
         /// 重载 HTML（改字号/内容变化）前记下滚动位置，加载完回到原处。
         /// 不记的话，切一次字号整篇就跳回顶部，长文阅读体验很差。
         var reloadRestoreY: CGFloat?
         weak var webView: WKWebView?
 
-        init(noteId: String, onOpenNote: ((String) -> Void)?, onOutline: (([OutlineItem]) -> Void)?) {
+        init(noteId: String, onOpenNote: ((String) -> Void)?, onOutline: (([OutlineItem]) -> Void)?,
+             onFindResult: ((Int, Int) -> Void)? = nil) {
             self.noteId = noteId
             self.onOpenNote = onOpenNote
             self.onOutline = onOutline
+            self.onFindResult = onFindResult
+        }
+
+        /// 页内查找：把信号翻成 JS 调用，结果回传 (当前序号, 总数)
+        func runFind(_ signal: FindSignal, in webView: WKWebView) {
+            switch signal.action {
+            case .search(let q):
+                let js = "window.__triliumFind ? window.__triliumFind.run(\(Self.jsLiteral(q))) : 0"
+                callJS(webView, js) { [onFindResult] r in
+                    let n = Self.intValue(r)
+                    DispatchQueue.main.async { [onFindResult] in onFindResult?(n > 0 ? 1 : 0, n) }
+                }
+            case .next:
+                stepFind(webView, 1)
+            case .prev:
+                stepFind(webView, -1)
+            case .clear:
+                callJS(webView, "window.__triliumFind && window.__triliumFind.clear()") { [onFindResult] _ in
+                    DispatchQueue.main.async { [onFindResult] in onFindResult?(0, 0) }
+                }
+            }
+        }
+
+        private func stepFind(_ webView: WKWebView, _ dir: Int) {
+            let sign = dir > 0 ? "1" : "-1"
+            callJS(webView, "window.__triliumFind ? window.__triliumFind.step(\(sign)) : [0,0]") { [onFindResult] r in
+                let pair = Self.intPair(r)
+                DispatchQueue.main.async { [onFindResult] in onFindResult?(pair.0, pair.1) }
+            }
+        }
+
+        private func callJS(_ webView: WKWebView, _ js: String, done: @escaping (Any?) -> Void) {
+            webView.evaluateJavaScript(js) { r, _ in done(r) }
+        }
+
+        /// 字符串 → JS 字符串字面量（含引号）：关键词里有引号/反斜杠/换行也不会破坏脚本
+        static func jsLiteral(_ s: String) -> String {
+            guard let d = try? JSONSerialization.data(withJSONObject: s),
+                  let out = String(data: d, encoding: .utf8) else { return "\"\"" }
+            return out
+        }
+
+        static func intValue(_ r: Any?) -> Int {
+            (r as? NSNumber)?.intValue ?? 0
+        }
+
+        static func intPair(_ r: Any?) -> (Int, Int) {
+            guard let arr = r as? [Any], arr.count >= 2,
+                  let a = arr[0] as? NSNumber, let b = arr[1] as? NSNumber else { return (0, 0) }
+            return (a.intValue, b.intValue)
         }
 
         /// JS 长按图片 → postMessage("imgsave") → 下载 → 存相册；"outline" → 大纲上报
@@ -152,6 +226,12 @@ struct ContentWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            // 页面加载期到达的查找信号：现在 DOM 就绪，补执行
+            // （首次搜索赶在 didFinish 前 / 正文重载后要重跑当前关键词）
+            if let pending = pendingFind {
+                pendingFind = nil
+                runFind(pending, in: webView)
+            }
             // 重载（改字号 / 正文刷新）后的位置恢复：优先于「首次进入恢复上次进度」
             if let y = reloadRestoreY {
                 reloadRestoreY = nil
@@ -222,11 +302,24 @@ struct ContentWebView: UIViewRepresentable {
                 "document.querySelectorAll('h1,h2,h3')[\(idx)].scrollIntoView({behavior:'smooth'})",
                 completionHandler: nil)
         }
+        // 页内查找信号：变化时驱动 JS（seq 自增保证「连点下一个」每次都执行）
+        if let sig = findSignal, context.coordinator.lastFindSignal != sig {
+            context.coordinator.lastFindSignal = sig
+            if uiView.isLoading {
+                context.coordinator.pendingFind = sig   // DOM 还没就绪，等 didFinish
+            } else {
+                context.coordinator.runFind(sig, in: uiView)
+            }
+        }
         guard context.coordinator.lastHTML != html else { return }
         // 只有「已经完成首次排版」后才记位置：首屏那次加载要走正常的阅读进度恢复
         context.coordinator.reloadRestoreY = context.coordinator.hasRestored
             ? uiView.scrollView.contentOffset.y : nil
         context.coordinator.lastHTML = html
+        // 正文重载会把 JS 侧高亮清掉：查找开着的话，加载完自动重跑当前关键词
+        if case .search? = findSignal?.action, let sig = findSignal {
+            context.coordinator.pendingFind = sig
+        }
         uiView.loadHTMLString(html, baseURL: AppSettings.shared.serverURL)
     }
 }
